@@ -1,0 +1,2 @@
+# Install in the separate Mechanical Python environment, not necessarily Gradio's.
+ansys-mechanical-core==0.12.7

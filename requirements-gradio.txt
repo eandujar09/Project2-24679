@@ -1,0 +1,4 @@
+gradio>=6.31,<7
+cadquery-ocp>=7.8,<7.10
+numpy>=2.0,<3
+trimesh>=4.6,<5

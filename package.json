@@ -1,0 +1,24 @@
+{
+  "name": "step-face-comments",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "build:gradio": "vite build --config vite.gradio.config.js",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/unit.test.js",
+    "test:browser": "playwright test",
+    "test:gradio": "playwright test --config playwright.gradio.config.js"
+  },
+  "dependencies": {
+    "idb": "^8.0.3",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "vite": "^7.1.7"
+  }
+}
