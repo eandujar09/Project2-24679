@@ -178,6 +178,8 @@ def run(request_path, output, mapping_only=False):
             ExtAPI.Graphics.Camera.SetFit()
             ExtAPI.Graphics.ExportImage(str(output / (key + ".png")))
         app.save(str(output / "model.mechdb"))
+        from .native_exports import save_native_exports
+        save_native_exports(app, globals(), output, report)
         report["status"] = "succeeded"
         report["limitations"] = ["Linear elastic, small deformation, one solid, one load step.",
                                   "Material is Mechanical 261's Structural Steel library definition.",

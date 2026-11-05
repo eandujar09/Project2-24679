@@ -66,8 +66,14 @@ def synthetic_solver(workspace, model_id, size):
         images.append(str(path))
     archive = folder / 'simulation.zip'
     archive.write_bytes(b'Synthetic UI test archive; not an engineering result.')
+    native = folder / 'setup.mechdat'
+    native.write_bytes(b'Synthetic UI test setup; not a Mechanical database.')
+    solved = folder / 'simulation.mechpz'
+    solved.write_bytes(b'Synthetic UI test archive; not a Mechanical archive.')
     return {'directory': folder, 'archive': str(archive), 'images': images,
+            'mechanicalFile': str(native), 'mechanicalArchive': str(solved),
             'report': {'status': 'succeeded', 'modelId': model_id, 'syntheticTest': True,
+                       'nativeArchive': {'includesResults': True},
                        'results': {'totalDeformation': {'maximum': 0.12, 'unit': 'mm'},
                                    'vonMisesStress': {'maximum': 18.4, 'unit': 'MPa'}}}}
 

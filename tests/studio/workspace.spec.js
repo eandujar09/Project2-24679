@@ -62,8 +62,14 @@ test('Shared face state, chat confirmations, generated code and result downloads
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('.studio-app')).toHaveAttribute('data-session-id', /[a-f0-9]{32}/);
+  const setupExport = page.getByRole('button', { name: 'Export setup (.mechdat)', exact: true });
+  const solvedExport = page.getByRole('button', { name: 'Export solved simulation (.mechpz)', exact: true });
+  await expect(setupExport).toBeDisabled();
+  await expect(solvedExport).toBeDisabled();
   await page.getByLabel('Upload STEP file').setInputFiles(fixture);
   await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await expect(setupExport).toBeDisabled();
+  await expect(solvedExport).toBeDisabled();
   await page.getByTestId('cad-viewport').locator('canvas').click();
   await expect(page.getByTestId('selected-face')).toBeVisible();
   await settled(page);
@@ -114,6 +120,13 @@ test('Shared face state, chat confirmations, generated code and result downloads
   await expect(page.locator('.condition-row')).toHaveCount(2);
   await expect(page.locator('.setup-details')).toContainText('Structural Steel');
   await page.getByRole('button', { name: 'Close Simulation setup' }).click();
+  await expect(setupExport).toBeEnabled();
+  await expect(solvedExport).toBeDisabled();
+  const setupDownload = page.waitForEvent('download');
+  await setupExport.click();
+  expect((await setupDownload).suggestedFilename()).toBe('setup.mechdat');
+  await settled(page);
+  await expect(solvedExport).toBeDisabled();
 
   await send(page, 'Compare mesh sizes and check convergence');
   await expect(page.locator('.message-code')).toContainText('Generated mesh study');
@@ -123,6 +136,10 @@ test('Shared face state, chat confirmations, generated code and result downloads
   await expect(page.locator('.message-image img').first()).toBeVisible();
   expect(await page.locator('.message-image img').first().evaluate(im => im.complete && im.naturalWidth > 0)).toBe(true);
   await expect(page.locator('.markdown table')).toBeVisible();
+  await expect(solvedExport).toBeEnabled();
+  const nativeDownload = page.waitForEvent('download');
+  await solvedExport.click();
+  expect((await nativeDownload).suggestedFilename()).toBe('simulation.mechpz');
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('link', { name: 'Download simulation', exact: true }).click();
   expect((await downloadPromise).suggestedFilename()).toBe('simulation.zip');

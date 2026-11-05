@@ -28,6 +28,7 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('studio-theme') || 'dark');
   const [split, setSplit] = useState(Number(localStorage.getItem('studio-split')) || 50);
   const [connectionMessage, setConnectionMessage] = useState(''), [checking, setChecking] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const viewport = useRef(null), fileInput = useRef(null), input = useRef(null), scroll = useRef(null), shell = useRef(null);
   const scrollPinned = useRef(true), applying = useRef(false);
   const handledVisualRequest = useRef(null);
@@ -85,6 +86,8 @@ function App() {
     });
   }, [visualRequest?.id]);
   const busy = working || !!snapshot?.busy || !snapshot || !connected, hasModel = !!c?.modelId;
+  const exportChoices = [['setup', 'Export setup (.mechdat)', 'exportFile'], ['solved', 'Export solved simulation (.mechpz)', 'download']];
+  const canExport = kind => !busy && !!snapshot?.exportOptions?.[kind]?.enabled;
   const pending = c?.pendingConfirmation;
   const messages = snapshot?.messages || [];
   const hasConversation = messages.some(m => m.role === 'user');
@@ -133,12 +136,15 @@ function App() {
     try { await act('/preferences', { revision: c.revision, interaction_mode: mode, visual_enabled: visual }); }
     catch { /* Displayed by act; retain the server's actual settings. */ }
   }
-  function downloadSetup() {
-    if (!c?.modelId) return;
-    request(`/sessions/${session.current}/annotations`).then(data => {
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-      const a = document.createElement('a'); a.href = url; a.download = 'simulation-setup.json'; a.click(); URL.revokeObjectURL(url);
-    }).catch(e => setError(e.message)); setMenu(null);
+  async function downloadSetup(kind = 'setup') {
+    if (!c?.modelId || !canExport(kind) || applying.current) return;
+    applying.current = true; setWorking(true); setExporting(true); setError(''); setMenu(null);
+    try {
+      const data = await request(`/sessions/${session.current}/export-mechanical`, { model_id: c.modelId, revision: c.revision, kind });
+      const a = document.createElement('a'); a.href = data.url; a.download = data.filename;
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (e) { setError(e.message); }
+    finally { applying.current = false; setWorking(false); setExporting(false); }
   }
   function beginResize(e) {
     e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
@@ -157,7 +163,7 @@ function App() {
       <button className="app-mark" title="Simulation Studio" aria-label="About Simulation Studio" onClick={() => setDialog('about')}><Icon name="model" width={24} height={24}/></button>
       <div className="project-menu">
         <button className="project-button" onClick={() => setMenu(menu === 'project' ? null : 'project')} aria-expanded={menu === 'project'}><span>Simulation Studio</span><span className="project-slash">/</span><strong>{c?.filename || 'Untitled project'}</strong><Icon name="caretDown" width={16}/></button>
-        {menu === 'project' && <div className="dropdown project-dropdown"><button onClick={importModel}><Icon name="importFile"/>Open STEP model<kbd>⌘ O</kbd></button><button onClick={() => togglePanel('files')}><Icon name="folder"/>Saved models</button><button disabled={!hasModel} onClick={downloadSetup}><Icon name="exportFile"/>Export simulation setup</button><div className="menu-separator"/><button onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); setMenu(null); }}><Icon name="eyeOpen"/>{theme === 'dark' ? 'Light' : 'Dark'} appearance</button></div>}
+        {menu === 'project' && <div className="dropdown project-dropdown"><button onClick={importModel}><Icon name="importFile"/>Open STEP model<kbd>⌘ O</kbd></button><button onClick={() => togglePanel('files')}><Icon name="folder"/>Saved models</button>{exportChoices.map(([kind, label, icon]) => <button key={kind} disabled={!canExport(kind)} title={snapshot?.exportOptions?.[kind]?.reason} onClick={() => downloadSetup(kind)}><Icon name={icon}/>{label}</button>)}<div className="menu-separator"/><button onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); setMenu(null); }}><Icon name="eyeOpen"/>{theme === 'dark' ? 'Light' : 'Dark'} appearance</button></div>}
       </div>
       <span className="header-divider"/>
       <span className="header-description">Simulation workspace</span>
@@ -170,7 +176,7 @@ function App() {
     <div className="main-workspace" ref={shell}>
       <nav className="left-rail" aria-label="Workspace panels">
         {['model', 'files', 'setup', 'code', 'results', 'activity'].map(key => <IconButton key={key} name={panelIcons[key]} label={panelTitles[key]} active={panel === key} onClick={() => togglePanel(key)}/>)}
-        <span className="rail-divider"/><IconButton name="importFile" label="Import model" disabled={busy} onClick={importModel}/><IconButton name="exportFile" label="Export simulation setup" disabled={!hasModel} onClick={downloadSetup}/>
+        <span className="rail-divider"/><IconButton name="importFile" label="Import model" disabled={busy} onClick={importModel}/>{exportChoices.map(([kind, label, icon]) => <IconButton key={kind} name={icon} label={label} title={label + " — " + (snapshot?.exportOptions?.[kind]?.reason || "Confirm a simulation setup first.")} disabled={!canExport(kind)} onClick={() => downloadSetup(kind)}/>)}
         <div className="rail-spacer"/><IconButton name="settings" label="Settings" onClick={() => setDialog('settings')}/>
       </nav>
       {panel && <aside className="inspector" aria-label={panelTitles[panel]}><LayoutPanelHeader icon={panelIcons[panel]} title={panelTitles[panel]} onClose={() => setPanel(null)}/><div className="inspector-body">
@@ -205,7 +211,7 @@ function App() {
           <div className={`conversation ${hasConversation ? '' : 'welcome-conversation'}`}>
             {!hasConversation ? <div className="zoo-welcome px-4 py-3"><div className="assistant-emblem"><Icon name="sparkles" width={34} height={34}/></div><h2 className="text-lg font-semibold my-2">Let’s set up your simulation.</h2><p className="text-2 text-sm">{hasModel ? `${c.filename} is ready. Tell me what you want to learn about it.` : 'Bring your CAD model. We’ll work through the setup together, one decision at a time.'}</p><WelcomeItem graphic={<div className="welcome-graphic"><Icon name="model" width={32}/></div>} heading="Start with your model"><p>Import a STEP file and select the faces you want to discuss.</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic violet"><Icon name="plane" width={32}/></div>} heading="See exactly what I mean"><p>{c?.interactionMode === 'autonomous' ? 'I’ll identify faces and work through the setup, asking when essential details are missing.' : 'I’ll highlight proposed faces, explain assumptions, and ask you to confirm.'}</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic mint"><Icon name="beaker" width={32}/></div>} heading="From setup to results"><p>Run an Ansys analysis, compare meshes, and explore the result plots here.</p></WelcomeItem><div className="starter-prompts">{['Help me set up an analysis', 'Where should I apply a load?', 'Compare mesh sizes'].map(text => <button disabled={!hasModel || busy} key={text} onClick={() => send(text)}>{text}<Icon name="arrowShortRight" width={16}/></button>)}</div></div>
               : messages.map((m, i) => <MessageCard key={`${c.modelId}-${i}`} message={m} onCopyError={setError}/>)}
-            {busy && <div className="assistant-thinking" role="status"><span className="spinner"/>{snapshot?.status || 'Working…'}</div>}
+            {busy && <div className="assistant-thinking" role="status"><span className="spinner"/>{exporting ? 'Exporting Mechanical setup…' : snapshot?.status || 'Working…'}</div>}
             {pending && !busy && <div className="confirmation-card" data-testid="confirmation-card"><div className="confirmation-title"><Icon name="clipboardCheckmark" width={18}/>Review before continuing</div><MarkdownText>{pending.summary}</MarkdownText><div className="confirmation-actions"><button className="confirm-button" onClick={() => send('Confirm', snapshot.proposalToken)}><Icon name="checkmark" width={17}/>Confirm</button><button onClick={() => { setMessage('I want to change '); input.current?.focus(); }}>Change something</button></div></div>}
             {!!snapshot?.downloads.length && <div className="chat-downloads">{snapshot.downloads.map(d => <a key={d.url} href={d.url} download={d.filename}><Icon name="download" width={16}/>{d.label}</a>)}</div>}
           </div>
@@ -217,7 +223,7 @@ function App() {
       </section></>}
       <nav className="right-rail" aria-label="Assistant panels"><IconButton name="sparkles" label="Toggle assistant" active={chatOpen} onClick={() => setChatOpen(!chatOpen)}/></nav>
     </div>
-    <footer className="status-bar"><button onClick={() => setDialog('settings')} className="connection-status"><Icon name={connected ? 'network' : 'networkCrossedOut'} width={16}/><span>{connected ? 'Local workspace' : 'Reconnecting…'}</span></button><span className="status-separator"/><button onClick={() => setDialog('settings')}><Icon name="settings" width={14}/>Settings</button><span className="status-middle">{busy ? snapshot?.status || 'Working…' : pending ? 'Waiting for your confirmation' : 'Ready'}</span><span>{selected ? `Face ${selected.index} selected` : 'No selection'}</span><span className="status-separator"/><span><Icon name="ruler" width={16}/>mm</span><span className="solver-badge"><Icon name="beaker" width={14}/>Ansys</span><button title="About" aria-label="About" onClick={() => setDialog('about')}><Icon name="questionMark" width={14}/></button></footer>
+    <footer className="status-bar"><button onClick={() => setDialog('settings')} className="connection-status"><Icon name={connected ? 'network' : 'networkCrossedOut'} width={16}/><span>{connected ? 'Local workspace' : 'Reconnecting…'}</span></button><span className="status-separator"/><button onClick={() => setDialog('settings')}><Icon name="settings" width={14}/>Settings</button><span className="status-middle">{busy ? exporting ? 'Exporting Mechanical setup…' : snapshot?.status || 'Working…' : pending ? 'Waiting for your confirmation' : 'Ready'}</span><span>{selected ? `Face ${selected.index} selected` : 'No selection'}</span><span className="status-separator"/><span><Icon name="ruler" width={16}/>mm</span><span className="solver-badge"><Icon name="beaker" width={14}/>Ansys</span><button title="About" aria-label="About" onClick={() => setDialog('about')}><Icon name="questionMark" width={14}/></button></footer>
     {error && <div className="error-toast" role="alert"><Icon name="triangleExclamation" width={20}/><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}><Icon name="close" width={16}/></button></div>}
     {!connected && <div className="offline-banner" role="status">Reconnecting to the local app. Your draft is kept here.</div>}
     {menu && <button className="menu-dismiss" aria-label="Close menu" onClick={() => setMenu(null)}/>}

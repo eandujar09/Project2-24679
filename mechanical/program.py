@@ -68,7 +68,9 @@ ctx API (available in every script):
 - ctx.snapshot(name, label): exports the current Mechanical viewport (activate Mesh/Geometry first).
 - ctx.table(name, rows): stores a list of dicts in the report and exports CSV/JSON, e.g. convergence rows.
 - ctx.record(name, value, unit=None): stores computed/scalar findings. Do not fabricate measured values.
-- ctx.save_project(name='model.mechdb'): saves inside this job. The harness also saves on completion.
+- ctx.save_project(name='model.mechdb'): saves inside this job.
+  The harness saves both model.mechdb and an exportable setup.mechdat on successful completion.
+  A successfully solved final model also produces simulation.mechpz including solver results.
 - ctx.artifact(name): obtains a path INSIDE this job for Mechanical exports; no slashes or parent paths.
 
 The worker returns stdout, traceback on error, actual geometry, all verified solves, extracted results,

@@ -38,6 +38,25 @@ hole openings. Small targets retain some surrounding model context. Dragging can
 the motion; normal polling does not move the camera again. Chat confirmation and
 the user's selected face remain independent of camera movement.
 
+## Native Mechanical exports
+
+The project menu and left toolbar offer two downloads, both disabled for a new
+CAD import until an appropriate setup or result exists:
+
+- **Export setup (.mechdat):** available after material/analysis settings are
+  confirmed, or after the agent creates an analysis in Mechanical. Before a run,
+  it builds the confirmed setup without generating a mesh or solving. After a
+  generated run, it exports that actual Mechanical model, preserving custom
+  analyses, materials and mesh controls. Unconfirmed proposals are excluded.
+- **Export solved simulation (.mechpz):** available when a successful current run
+  produced a Mechanical archive. The archive includes result/solution and user
+  files, so it can be restored in Mechanical with its solver results.
+
+The setup file alone does not bundle external solver results. Setup changes
+invalidate current run downloads. Older jobs without native exports must be
+prepared/run again; they are never silently replaced with a generic analysis.
+The existing simulation ZIP remains available for code, plots and diagnostics.
+
 ## Interaction
 
 Open a STEP file, click a whole CAD face on the left, and describe the analysis in

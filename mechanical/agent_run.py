@@ -216,6 +216,8 @@ def run(request_path, output):
                 exec(compile(program['code'], str(code_path), 'exec'), ns)
                 stage = 'project export'
                 context.save_project()
+                from .native_exports import save_native_exports
+                save_native_exports(app, ns, output, report)
                 report['status'] = 'succeeded'
             except Exception as exc:
                 report['error'] = str(exc)

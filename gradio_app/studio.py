@@ -1,7 +1,7 @@
 """HTTP presentation adapter for the Zoo-derived simulation frontend.
 
 ChatWorkspace remains the authority for CAD state and ChatAgent owns every
-engineering action, including confirmation. This module never executes tools.
+engineering action, including confirmation. Exports serialize confirmed state.
 """
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -37,6 +37,12 @@ class Selection(BaseModel):
 
 class OpenModel(BaseModel):
     model_id: str
+
+class MechanicalExport(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    model_id: str
+    revision: int
+    kind: Literal['setup', 'solved'] = 'setup'
 
 class Preferences(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -77,6 +83,7 @@ def install_studio(server, service, chat_model=None):
         return f'/api/studio/sessions/{sid}/files/{key}'
 
     def snapshot(sid):
+        from .mechanical_export import export_options
         with service.lock:
             s = existing(sid)
             context = service.context(sid)
@@ -92,16 +99,19 @@ def install_studio(server, service, chat_model=None):
                 messages.append(dict(message, content=content))
             downloads = []
             if s.result:
-                for key, label in [('archive', 'Download simulation'), ('codeFile', 'Python source')]:
+                for key, label in [('mechanicalFile', 'Mechanical setup (.mechdat)'),
+                                   ('mechanicalArchive', 'Solved simulation (.mechpz)'),
+                                   ('archive', 'Download simulation'), ('codeFile', 'Python source')]:
                     if s.result.get(key):
                         url = file_url(sid, s.result[key])
                         if url:
                             downloads.append({'url': url, 'label': label, 'filename': Path(s.result[key]).name})
             return {'context': context, 'viewer': viewer, 'messages': messages,
-                    'busy': s.busy or sid in active, 'proposalToken': proposal_token(s),
+                    'busy': s.busy or s.running or sid in active, 'proposalToken': proposal_token(s),
                     'status': statuses.get(sid, 'Thinking…') if sid in active else (
-                        'Running Ansys…' if s.running else 'Review proposal' if s.pending_confirmation else 'Ready'),
+                        'Exporting Mechanical setup…' if s.exporting else 'Running Ansys…' if s.running else 'Review proposal' if s.pending_confirmation else 'Ready'),
                     'downloads': downloads,
+                    'exportOptions': export_options(service, s),
                     'projects': [{'label': label, 'modelId': mid} for label, mid in service.workspace.projects()]}
 
     def run_turn(sid, message):
@@ -251,12 +261,24 @@ def install_studio(server, service, chat_model=None):
         return FileResponse(path, media_type='application/json')
 
     @api.get('/sessions/{sid}/files/{key}')
-    def artifact(sid: str, key: str):
+    def artifact(sid: str, key: str, download: bool = False):
         existing(sid)
         path = files.get(sid, {}).get(key)
         if not path or not path.is_file():
             raise HTTPException(404, 'This result file is no longer available.')
-        return FileResponse(path, filename=path.name, content_disposition_type='inline')
+        return FileResponse(path, filename=path.name, content_disposition_type='attachment' if download else 'inline')
+
+    @api.post('/sessions/{sid}/export-mechanical')
+    def mechanical_export(sid: str, body: MechanicalExport):
+        from .mechanical_export import export_mechanical
+        existing(sid)
+        try:
+            path = export_mechanical(service, sid, body.model_id, body.revision, body.kind)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(503, 'Could not export Mechanical setup: ' + str(exc)) from exc
+        return {'url': file_url(sid, path) + '?download=true', 'filename': path.name}
 
     @api.get('/sessions/{sid}/annotations')
     def annotations(sid: str):

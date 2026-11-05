@@ -28,6 +28,8 @@ class CADSession:
     running: bool = False
     last_fingerprint: str | None = None
     result: dict | None = None
+    mechanical_export: dict | None = None
+    exporting: bool = False
     error: str | None = None
     provider_session: str | None = None
     program_attempts: list = field(default_factory=list)
@@ -103,6 +105,7 @@ class ChatWorkspace:
             s.small_deformation = None
             s.element_size_mm = 3.0
             s.result = None
+            s.mechanical_export = None
             s.error = None
             s.last_fingerprint = None
             s.provider_session = None

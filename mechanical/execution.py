@@ -72,6 +72,13 @@ def archive_run(directory):
 
 def result_files(directory, report):
     directory = Path(directory)
+    native = directory / 'results' / 'setup.mechdat'
+    native_files = ({'mechanicalFile': str(native)} if report.get('status') == 'succeeded'
+                    and native.is_file() and native.stat().st_size else {})
+    archive = directory / 'results' / 'simulation.mechpz'
+    if (report.get('status') == 'succeeded' and report.get('nativeArchive', {}).get('includesResults')
+            and archive.is_file() and archive.stat().st_size):
+        native_files['mechanicalArchive'] = str(archive)
     if report.get("kind") == "generated-python":
         images = []
         for item in report.get("images", []):
@@ -80,9 +87,9 @@ def result_files(directory, report):
                 path = directory / "results" / filename
                 if path.is_file():
                     images.append(str(path))
-        return {"report": report, "directory": directory, "archive": str(directory / "simulation.zip"),
+        return {**native_files, "report": report, "directory": directory, "archive": str(directory / "simulation.zip"),
                 "images": images, "codeFile": str(directory / "results" / "agent.py")}
-    return {"report": report, "directory": directory, "archive": str(directory / "simulation.zip"),
+    return {**native_files, "report": report, "directory": directory, "archive": str(directory / "simulation.zip"),
             "images": [str(directory / "results" / f"{name}.png")
                        for name in ("totalDeformation", "vonMisesStress")
                        if report["status"] == "succeeded" and (directory / "results" / f"{name}.png").is_file()]}
