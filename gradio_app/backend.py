@@ -210,10 +210,12 @@ class Workspace:
                                 project["boundaryConditions"], selected,
                                 self.root / "previews" / f"{uuid.uuid4().hex}.glb")
 
-    def viewer_state(self, model_id, selected=None, focus=False):
+    def viewer_state(self, model_id, selected=None, focus=False, highlighted=None, focus_face=None, **extra):
         project = self.get(model_id)
         if selected:
             self.require_face(project, selected)
+        for key in highlighted or []:
+            self.require_face(project, key)
         path = self.root / "previews" / f"{model_id}-viewer.json"
         with self.lock:
             if not path.exists():
@@ -221,4 +223,5 @@ class Workspace:
         return json.dumps({
             "modelId": model_id, "geometryUrl": f"/gradio_api/file={quote(path.as_posix(), safe='/:')}",
             "selected": selected, "focus": focus, "boundaryConditions": project["boundaryConditions"],
+            "highlighted": highlighted or [], "focusFace": focus_face, **extra,
         }, allow_nan=False)

@@ -185,7 +185,7 @@ class RequestTests(unittest.TestCase):
                 return 1
 
         import sys
-        with patch("gradio_app.simulation.subprocess.Popen", FailedProcess):
+        with patch("mechanical.execution.subprocess.Popen", FailedProcess):
             result = run_project(self.workspace, self.mid, sys.executable)
         self.assertEqual(result["report"]["status"], "failed")
         self.assertEqual(result["images"], [])

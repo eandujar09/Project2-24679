@@ -1,265 +1,220 @@
-"""Run with: python -m gradio_app.app"""
-
+"""Chat-driven CAD workspace. Run with python -m gradio_app.app."""
 import argparse
+from contextlib import asynccontextmanager
 from functools import wraps
 import os
 from pathlib import Path
+import hashlib
 
 import gradio as gr
-
 from .backend import Workspace
 from .viewer import STATIC, cad_viewer
-from .simulation import default_python, run_project
+from .remote import check_connection
+from .chat_state import ChatWorkspace
+from .chat_agent import ChatAgent
+
+CSS = '''
+.gradio-container { max-width: 1560px !important; }
+#cad-header { padding: 8px 0 4px; }
+#cad-header h1 { font-size: 30px; letter-spacing: -0.7px; margin-bottom: 6px; }
+#chat-panel { border: 1px solid var(--border-color-primary); border-radius: 14px; padding: 16px; }
+#selection-context { min-height: 40px; padding: 8px 12px; border-radius: 8px; background: var(--background-fill-secondary); }
+#chat-input textarea { font-size: 15px; }
+.python-cad-viewer .cad-viewport { height: 600px; }
+@media(max-width: 850px) { .python-cad-viewer .cad-viewport { height: 400px; } }
+'''
 
 
-def user_errors(function):
-    @wraps(function)
+def user_errors(fn):
+    @wraps(fn)
     def wrapped(*args, **kwargs):
         try:
-            return function(*args, **kwargs)
+            return fn(*args, **kwargs)
         except (ValueError, OSError) as exc:
             raise gr.Error(str(exc)) from exc
     return wrapped
 
 
-def build_app(workspace):
-    with gr.Blocks(title="STEP Face Comments · Python", analytics_enabled=False) as app:
-        model = gr.State(None)
-        gr.Markdown("# STEP Face Comments\nGradio workspace · interactive CAD viewer · Python/OpenCascade backend")
-        gr.Markdown(
-            "Files are processed and stored **on the Python server**. Click a CAD face or use the dropdown. "
-            "Teal = hover; amber = selected; purple = fixed; green = displacement; "
-            "coral = force; blue = pressure. Use the Mechanical simulation section below to solve a saved annotation snapshot."
-        )
+def build_app(workspace, service=None, chat_model=None):
+    service = service or ChatWorkspace(workspace)
+    agent = ChatAgent(service, chat_model)
+    with gr.Blocks(title='CAD Simulation Studio', analytics_enabled=False) as app:
+        sid = gr.State(value=None)
+        seen = gr.State(-1)
+        gr.Markdown('# Talk to your model\nSelect faces on the left. Build and run your simulation through the conversation on the right.', elem_id='cad-header')
         with gr.Row():
-            upload = gr.File(label="Open STEP", file_types=[".step", ".stp"], type="filepath")
-            with gr.Column():
-                saved = gr.Dropdown(label="Saved projects", choices=workspace.projects())
+            with gr.Column(scale=6, min_width=420):
                 with gr.Row():
-                    refresh = gr.Button("Refresh project list")
-                    reopen = gr.Button("Reopen selected project")
-        status = gr.Textbox(label="Project status", interactive=False)
-        with gr.Row():
-            with gr.Column(scale=2):
+                    upload = gr.File(label='Open STEP', file_types=['.step', '.stp'], type='filepath', height=110)
+                    with gr.Column():
+                        saved = gr.Dropdown(label='Saved models', choices=workspace.projects())
+                        reopen = gr.Button('Open saved model', size='sm')
                 viewer = cad_viewer()
-                with gr.Row():
-                    face = gr.Dropdown(label="Select whole CAD face", choices=[])
-                    clear = gr.Button("Clear face")
-                face_info = gr.JSON(label="Selected face metadata (mm, mm²)")
-                table = gr.Dataframe(headers=["Kind", "Face", "Text / values", "ID"],
-                                     datatype=["str"] * 4, interactive=False, label="All project annotations")
-            with gr.Column():
-                with gr.Tab("Comments"):
-                    comment = gr.Dropdown(label="Choose comment to navigate / edit", choices=[])
-                    text = gr.Textbox(label="Comment text", lines=4, max_length=20000)
-                    with gr.Row():
-                        new_comment = gr.Button("New comment")
-                        save_comment = gr.Button("Save comment", variant="primary")
-                    confirm_comment = gr.Checkbox(label="Confirm comment deletion")
-                    delete_comment = gr.Button("Delete selected comment", variant="stop")
-                with gr.Tab("Boundary conditions"):
-                    condition = gr.Dropdown(label="Choose condition to navigate / edit", choices=[])
-                    kind = gr.Dropdown(label="Condition type", choices=[
-                        ("Fixed support (Ux = Uy = Uz = 0)", "fixed"),
-                        ("Prescribed displacement (mm)", "displacement"),
-                        ("Total face force (N)", "force"), ("Pressure (MPa)", "pressure"),
-                    ], value="fixed")
-                    gr.Markdown("Vectors use global X/Y/Z. Positive pressure acts inward; negative outward. "
-                                "All three displacement components are prescribed, including zeros.")
-                    with gr.Row():
-                        x = gr.Number(label="X (mm or N)", value=0)
-                        y = gr.Number(label="Y (mm or N)", value=0)
-                        z = gr.Number(label="Z (mm or N)", value=0)
-                    pressure = gr.Number(label="Pressure (MPa)", value=1)
-                    gr.Markdown("Only values relevant to the chosen type are used. "
-                                "The preview shows whole-face tints, directional arrows, and support glyphs.")
-                    with gr.Row():
-                        new_condition = gr.Button("New condition")
-                        save_condition = gr.Button("Apply to face", variant="primary")
-                    confirm_condition = gr.Checkbox(label="Confirm condition deletion")
-                    delete_condition = gr.Button("Delete selected condition", variant="stop")
-        with gr.Row():
-            incoming = gr.File(label="Import annotation JSON (merge)", file_types=[".json"], type="filepath")
-            with gr.Column():
-                export = gr.Button("Export annotation JSON")
-                download = gr.File(label="Download JSON", interactive=False)
-        gr.Markdown("Python face keys are importer-specific, **not Ansys Mechanical entity IDs**. "
-                    "Browser-app JSON can be read, but its different face keys remain unmapped. "
-                    "No automatic topology reassignment is performed.")
+                selection = gr.Markdown('No face selected.', elem_id='selection-context')
+                gr.Markdown('**Amber:** your selection · **Violet:** assistant highlights · arrows and support symbols show saved conditions.')
+                with gr.Accordion('Choose a face by number', open=False):
+                    face = gr.Dropdown(label='Select whole CAD face', choices=[])
+                    clear = gr.Button('Clear selection', size='sm')
+                with gr.Accordion('Connection', open=False):
+                    check = gr.Button('Check remote Ansys connection', size='sm')
+                    connection_status = gr.Markdown('Ansys runs on your configured remote computer.')
+            with gr.Column(scale=5, min_width=380, elem_id='chat-panel'):
+                chat = gr.Chatbot(label='Simulation assistant', height=620, layout='bubble', buttons=['copy'])
+                status = gr.Markdown('Ready · the assistant can write and run PyMechanical code')
+                message = gr.Textbox(label='Message the assistant', placeholder='Analyze this bracket and compare mesh sizes…', lines=2, max_lines=5, max_length=8000, elem_id='chat-input')
+                send = gr.Button('Send', variant='primary')
+                artifacts = gr.File(label='Latest simulation · report, images, and Mechanical project', file_count='multiple', interactive=False, visible=False)
+        timer = gr.Timer(0.8)
+        read = gr.Button('Read CAD context', visible=False)
+        context_json = gr.JSON(visible=False)
+        outputs = [viewer, chat, selection, status, face, saved, artifacts, seen, send]
 
-        with gr.Accordion("Ansys Mechanical · deterministic static structural simulation", open=False):
-            gr.Markdown(
-                "Runs **Mechanical 2026 R1 (261)** in a separate Python process using the current model's saved "
-                "boundary conditions. Supported scope: **one solid**, Mechanical's **Structural Steel** library material, "
-                "linear elastic/small deformation, one load step, quadratic tetrahedra, one CPU core, and **no weak springs**. "
-                "Assemblies, contacts, shells, beams, conflicting supports, and ambiguous face mappings are rejected. "
-                "The conservative mesh limit is 32,000 nodes/elements. Review the assumptions before solving."
-            )
-            mechanical_python = gr.Textbox(label="Mechanical Python executable", value=default_python(),
-                                           placeholder="Path to Python in your PyMechanical environment")
-            element_size = gr.Number(label="Mesh element size (mm)", value=3, minimum=0.001)
-            confirm_solve = gr.Checkbox(label="I confirm Structural Steel and the single-solid, small-deformation assumptions for this simulation")
-            solve = gr.Button("Run simulation in Mechanical", variant="primary")
-            simulation_status = gr.Markdown("No simulation run in this session. Results below belong to their recorded model hash and input snapshot.")
-            simulation_results = gr.JSON(label="Simulation report · extrema, units, mesh, mapping, solver messages")
-            contours = gr.Gallery(label="Mechanical results · total deformation and von Mises stress", columns=2, object_fit="contain", height="auto")
-            simulation_files = gr.File(label="Download simulation artifacts (ZIP includes project, results, inputs, and logs)", file_count="multiple", interactive=False)
+        def resolve_session(session_id, request=None):
+            if session_id:
+                return session_id  # Pure callback tests may supply an explicit session.
+            if request is None or not request.session_hash:
+                raise ValueError('Reload the app to establish a browser session.')
+            return hashlib.sha256(request.session_hash.encode()).hexdigest()[:32]
 
-        outputs = [model, viewer, face, face_info, comment, condition, table, status,
-                   text, kind, x, y, z, pressure, confirm_comment, confirm_condition, saved, download]
+        def initialize(session_id, request: gr.Request):
+            return render(resolve_session(session_id, request))
 
-        def face_metadata(project, key):
-            return next((item for item in project["faces"] if item["key"] == key), None)
-
-        def render(project, selected=None, focus=False):
-            keys = {f["key"] for f in project["faces"]}
-            rows = []
-            choices = {}
-            for collection in ("comments", "boundaryConditions"):
-                choices[collection] = []
-                for item in project[collection]:
-                    label = item["faceKey"] if item["faceKey"] in keys else f'Unmapped: {item["faceKey"]}'
-                    summary = item["text"] if collection == "comments" else f'{item["type"]}: {item["values"]}'
-                    choices[collection].append((f'{label} · {summary[:70]} · {item["id"][:8]}', item["id"]))
-                    rows.append(["Comment" if collection == "comments" else item["type"], label, summary, item["id"]])
-            unmapped = sum(item["faceKey"] not in keys for collection in ("comments", "boundaryConditions") for item in project[collection])
-            return (
-                project["id"], workspace.viewer_state(project["id"], selected, focus),
-                gr.Dropdown(choices=[(f'Face {f["index"]} · {f["areaMm2"]:.3g} mm²', f["key"]) for f in project["faces"]], value=selected),
-                face_metadata(project, selected),
-                gr.Dropdown(choices=choices["comments"], value=None),
-                gr.Dropdown(choices=choices["boundaryConditions"], value=None), rows,
-                f'{project["filename"]} · {len(keys)} faces · {len(project["comments"])} comments · '
-                f'{len(project["boundaryConditions"])} conditions · {unmapped} unmapped · saved on Python server',
-                "", "fixed", 0, 0, 0, 1, False, False,
-                gr.Dropdown(choices=workspace.projects(), value=project["id"]), None,
-            )
+        def render(session_id, status_text=None):
+            with service.lock:
+                s = service.session(session_id)
+                p = workspace.get(s.model_id) if s.model_id else None
+                selected = next((f for f in p['faces'] if f['key'] == s.selected), None) if p else None
+                badge = (f'**Selected: Face {selected["index"]}** · {selected["areaMm2"]:.4g} mm² · The assistant can see this selection.'
+                         if selected else '**No face selected.** Click the model to give the assistant a face reference.')
+                if s.highlighted:
+                    indices = [str(f['index']) for f in p['faces'] if f['key'] in s.highlighted]
+                    badge += '  \nAssistant highlights: ' + ', '.join('Face ' + n for n in indices)
+                history = []
+                for item in s.messages:
+                    content = item['content']
+                    if isinstance(content, dict) and 'image' in content:
+                        content = gr.Image(value=content['image'], label=content['label'], show_label=True, interactive=False, buttons=['download', 'fullscreen'])
+                    elif isinstance(content, dict) and 'code' in content:
+                        content = '**' + content['title'] + '**\n\n```python\n' + content['code'] + '\n```'
+                    history.append({'role': item['role'], 'content': content})
+                files = [s.result['archive']] if s.result and s.result.get('archive') else []
+                if s.result and s.result.get('codeFile') and Path(s.result['codeFile']).is_file():
+                    files.append(s.result['codeFile'])
+                return (service.viewer(session_id), history, badge,
+                        status_text or ('Running Ansys…' if s.running else 'Thinking…' if s.busy else 'Waiting for your confirmation' if s.pending_confirmation else 'Ready'),
+                        gr.Dropdown(choices=[(f'Face {f["index"]} · {f["areaMm2"]:.3g} mm²', f['key']) for f in p['faces']] if p else [], value=s.selected),
+                        gr.Dropdown(choices=workspace.projects(), value=s.model_id),
+                        gr.update(value=files, visible=bool(files)), s.revision, gr.update(interactive=not s.busy))
 
         @user_errors
-        def open_file(path):
+        def open_file(path, session_id, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
             if not path:
-                raise ValueError("Choose a STEP file first.")
-            return render(workspace.open_step(path))
+                raise ValueError('Choose a STEP file first.')
+            service.open_model(session_id, workspace.open_step(path))
+            return render(session_id)
 
         @user_errors
-        def open_saved(model_id):
-            return render(workspace.get(model_id))
+        def open_saved(model_id, session_id, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
+            service.open_model(session_id, workspace.get(model_id))
+            return render(session_id)
 
         @user_errors
-        def select_face(model_id, key):
-            return render(workspace.get(model_id), key, focus=bool(key))
+        def select_face(key, session_id, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
+            s = service.session(session_id)
+            service.select(session_id, s.model_id, key, focus=True)
+            return render(session_id)
 
         @user_errors
-        def pick_face(model_id, event: gr.EventData):
+        def pick_face(session_id, event: gr.EventData, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
             data = event._data
-            if not isinstance(data, dict) or data.get("modelId") != model_id:
-                # Ignore a click that was queued before another model replaced it.
+            if not isinstance(data, dict) or data.get('modelId') != service.session(session_id).model_id:
                 return tuple(gr.skip() for _ in outputs)
-            key = data.get("faceKey")
-            return render(workspace.get(model_id), key)
+            service.select(session_id, data['modelId'], data.get('faceKey'))
+            return render(session_id)
 
-        @user_errors
-        def navigate(model_id, record_id, collection):
-            project = workspace.get(model_id)
-            record = next((r for r in project[collection] if r["id"] == record_id), None)
-            if record is None:
-                return render(project)
-            mapped = face_metadata(project, record["faceKey"])
-            result = list(render(project, record["faceKey"] if mapped else None, focus=True))
-            if not mapped:
-                gr.Warning("This annotation's face is unmapped. It can be deleted, but not edited or reassigned.")
-            if collection == "comments":
-                result[4] = gr.update(value=record_id)
-                result[8] = record["text"]
+        def respond(text, session_id, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
+            if not text or not text.strip():
+                yield tuple(gr.skip() for _ in [*outputs, message])
+                return
+            for state in agent.turn(session_id, text):
+                yield (*render(session_id, state), '')
+
+        def selection_turn(session_id, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
+            with service.lock:
+                s = service.session(session_id)
+                text = s.selection_event
+                s.selection_event = None
+            if text:
+                yield from respond(text, session_id)
             else:
-                result[5] = gr.update(value=record_id)
-                result[9] = record["type"]
-                result[10:14] = [record["values"].get(axis, 0) for axis in "xyz"] + [record["values"].get("magnitude", 1)]
-            return tuple(result)
+                yield tuple(gr.skip() for _ in [*outputs, message])
 
-        @user_errors
-        def write_comment(model_id, key, record_id, content):
-            return render(workspace.save_annotation(model_id, key, "comments", {"text": content}, record_id), key)
+        def poll(session_id, last_seen, request: gr.Request = None):
+            session_id = resolve_session(session_id, request)
+            s = service.session(session_id)
+            return tuple(gr.skip() for _ in outputs) if s.revision == last_seen else render(session_id)
 
-        def navigate_comment(model_id, record_id):
-            return navigate(model_id, record_id, "comments")
+        def clear_selection(session_id, request: gr.Request):
+            return select_face(None, session_id, request)
 
-        def navigate_condition(model_id, record_id):
-            return navigate(model_id, record_id, "boundaryConditions")
+        def read_context(session_id, request: gr.Request):
+            session_id = resolve_session(session_id, request)
+            service.session(session_id)
+            return service.context(session_id)
 
-        @user_errors
-        def write_condition(model_id, key, record_id, selected_kind, vx, vy, vz, magnitude):
-            values = {"x": vx, "y": vy, "z": vz} if selected_kind in ("force", "displacement") else (
-                {"magnitude": magnitude} if selected_kind == "pressure" else {})
-            return render(workspace.save_annotation(model_id, key, "boundaryConditions",
-                                                    {"type": selected_kind, "values": values}, record_id), key)
-
-        @user_errors
-        def remove(model_id, record_id, confirmed, collection):
-            return render(workspace.delete_annotation(model_id, collection, record_id, confirmed))
-
-        @user_errors
-        def merge(model_id, path):
-            if not path:
-                raise ValueError("Choose a JSON file first.")
-            return render(workspace.import_annotations(model_id, path))
-
-        @user_errors
-        def run_simulation(model_id, executable, mesh_size, confirmed, progress=gr.Progress()):
-            if not confirmed:
-                raise ValueError("Confirm the simulation's material and modeling assumptions first.")
-            progress(0.05, desc="Validating annotations and preparing exact CAD face signatures")
-            # All project events share this callback's queue lock, so annotations
-            # cannot mutate during the snapshot/solve lifecycle in this process.
-            progress(0.1, desc="Running Mechanical: import, face mapping, mesh, solve, result export")
-            result = run_project(workspace, model_id, executable, mesh_size)
-            report, directory = result["report"], result["directory"]
-            progress(1.0, desc="Mechanical worker finished")
-            succeeded = report["status"] == "succeeded"
-            headline = "**Simulation succeeded.**" if succeeded else "**Simulation failed.** " + report.get("error", "See the worker log.")
-            headline += f" Model SHA-256: `{report['modelId']}`. Results are a snapshot, not a live update of subsequent annotations."
-            labels = ("Total deformation (mm)", "Equivalent von Mises stress (MPa)")
-            images = list(zip(result["images"], labels))
-            files = [str(directory / name) for name in ("request.json", "report.json", "run.log")]
-            if result["archive"]:
-                files.insert(0, result["archive"])
-            return headline, report, images, files, False
-
-        # A single queue group serializes native STEP work and project mutations.
-        event_options = {"concurrency_id": "workspace", "concurrency_limit": 1}
-        upload.upload(open_file, upload, outputs, **event_options)
-        reopen.click(open_saved, saved, outputs, **event_options)
-        refresh.click(lambda: gr.Dropdown(choices=workspace.projects(), value=None), outputs=saved, **event_options)
-        face.input(select_face, [model, face], outputs, **event_options)
-        viewer.select(pick_face, model, outputs, **event_options)
-        clear.click(lambda mid: select_face(mid, None), model, outputs, **event_options)
-        comment.input(navigate_comment, [model, comment], outputs, **event_options)
-        condition.input(navigate_condition, [model, condition], outputs, **event_options)
-        new_comment.click(lambda mid, key: select_face(mid, key), [model, face], outputs, **event_options)
-        new_condition.click(lambda mid, key: select_face(mid, key), [model, face], outputs, **event_options)
-        save_comment.click(write_comment, [model, face, comment, text], outputs, **event_options)
-        save_condition.click(write_condition, [model, face, condition, kind, x, y, z, pressure], outputs, **event_options)
-        delete_comment.click(lambda mid, rid, ok: remove(mid, rid, ok, "comments"),
-                             [model, comment, confirm_comment], outputs, **event_options)
-        delete_condition.click(lambda mid, rid, ok: remove(mid, rid, ok, "boundaryConditions"),
-                               [model, condition, confirm_condition], outputs, **event_options)
-        incoming.upload(merge, [model, incoming], outputs, **event_options)
-        export.click(user_errors(workspace.export_annotations), model, download, **event_options)
-        solve.click(run_simulation, [model, mechanical_python, element_size, confirm_solve],
-                    [simulation_status, simulation_results, contours, simulation_files, confirm_solve], **event_options)
+        app.load(initialize, sid, outputs)
+        upload.upload(open_file, [upload, sid], outputs, concurrency_id='cad-files', concurrency_limit=1)
+        reopen.click(open_saved, [saved, sid], outputs, concurrency_id='cad-files', concurrency_limit=1)
+        viewer.select(pick_face, sid, outputs, queue=False).then(selection_turn, sid, [*outputs, message], concurrency_limit=4)
+        face.input(select_face, [face, sid], outputs, queue=False).then(selection_turn, sid, [*outputs, message], concurrency_limit=4)
+        clear.click(clear_selection, sid, outputs, queue=False)
+        send.click(respond, [message, sid], [*outputs, message], concurrency_limit=4)
+        message.submit(respond, [message, sid], [*outputs, message], concurrency_limit=4)
+        timer.tick(poll, [sid, seen], outputs, queue=False, show_progress='hidden')
+        check.click(user_errors(check_connection), outputs=connection_status)
+        read.click(read_context, sid, context_json, api_name='read_cad_context')
+    app.cad_service = service
     return app
 
 
+def build_server(workspace, chat_model=None, service=None, studio=True):
+    from fastapi import FastAPI
+    from .mcp_server import build_mcp
+    service = service or ChatWorkspace(workspace)
+    mcp = build_mcp(service)
+    mcp_app = mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async with mcp.session_manager.run():
+            yield
+
+    server = FastAPI(lifespan=lifespan)
+    server.mount('/mcp', mcp_app)
+    if studio:
+        from .studio import install_studio
+        install_studio(server, service, chat_model)
+    demo = build_app(workspace, service, chat_model)
+    demo.queue()
+    server = gr.mount_gradio_app(server, demo, path='/', css=CSS,
+             allowed_paths=[str(STATIC), str(workspace.root / 'previews'), str(workspace.root / 'exports')])
+    server.state.cad_service = service
+    return server
+
+
 def main():
+    import uvicorn
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=7860)
-    parser.add_argument("--data-dir", default=os.environ.get("STEP_GRADIO_DATA", "gradio-data"))
+    parser.add_argument('--port', type=int, default=7860)
+    parser.add_argument('--data-dir', default=os.environ.get('STEP_GRADIO_DATA', 'gradio-data'))
     args = parser.parse_args()
-    workspace = Workspace(args.data_dir)
-    app = build_app(workspace)
-    app.queue().launch(server_name="127.0.0.1", server_port=args.port, share=False,
-                       allowed_paths=[str(STATIC), str(workspace.root / "previews"), str(workspace.root / "exports")])
+    uvicorn.run(build_server(Workspace(args.data_dir)), host='127.0.0.1', port=args.port)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

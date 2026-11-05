@@ -68,23 +68,32 @@ def normalize_conditions(records, face_keys):
 
 
 def validate_request(request):
-    if request.get("schemaVersion") != 1 or request.get("faceMapping") != "python-ocp-v1":
+    is_program = request.get("schemaVersion") == 2
+    if request.get("schemaVersion") not in (1, 2) or request.get("faceMapping") != "python-ocp-v1":
         raise ValueError("Unsupported Mechanical request or CAD face namespace.")
     step = Path(request["stepFile"])
     actual = hashlib.sha256(step.read_bytes()).hexdigest()
     if actual != request.get("modelId"):
         raise ValueError("STEP SHA-256 mismatch; refusing to run against different geometry.")
     settings = request.get("settings", {})
-    if not finite(settings.get("elementSizeMm")) or settings["elementSizeMm"] <= 0:
-        raise ValueError("Element size must be positive and finite (mm).")
-    if settings.get("material") != "Structural Steel" or settings.get("mechanicalVersion") != 261:
-        raise ValueError("This runner currently supports Mechanical 261 with its Structural Steel library material.")
-    if settings.get("solverCores") != 1 or settings.get("largeDeflection") is not False:
-        raise ValueError("Expected one solver core and small-deflection static structural analysis.")
+    if is_program:
+        from .program import validate_program
+        validate_program(request.get("program"))
+        if settings.get("mechanicalVersion") != 261 or settings.get("solverCores") != 1:
+            raise ValueError("Expected Mechanical 261 and one solver core.")
+        if type(settings.get("maxMeshEntities")) is not int or not 1 <= settings["maxMeshEntities"] <= 32000:
+            raise ValueError("Mesh limit must be at most 32000 nodes/elements.")
+    else:
+        if not finite(settings.get("elementSizeMm")) or settings["elementSizeMm"] <= 0:
+            raise ValueError("Element size must be positive and finite (mm).")
+        if settings.get("material") != "Structural Steel" or settings.get("mechanicalVersion") != 261:
+            raise ValueError("This runner currently supports Mechanical 261 with its Structural Steel library material.")
+        if settings.get("solverCores") != 1 or settings.get("largeDeflection") is not False:
+            raise ValueError("Expected one solver core and small-deflection static structural analysis.")
     if request.get("units") != {"length": "mm", "force": "N", "pressure": "MPa"}:
         raise ValueError("Expected explicit mm/N/MPa units.")
     faces = request.get("faceSignatures")
-    if not isinstance(faces, list) or not faces or len({f["key"] for f in faces}) != len(faces):
+    if not isinstance(faces, list) or (not faces and not is_program) or len({f["key"] for f in faces}) != len(faces):
         raise ValueError("Invalid source face signatures.")
     for face in faces:
         if (not finite(face.get("areaMm2")) or face["areaMm2"] <= 0 or
@@ -109,7 +118,7 @@ def validate_request(request):
     records = request.get("boundaryConditions", [])
     if any(r.get("modelId") != actual for r in records):
         raise ValueError("A boundary condition belongs to another model.")
-    return normalize_conditions(records, {f["key"] for f in faces})
+    return records if is_program else normalize_conditions(records, {f["key"] for f in faces})
 
 
 def boundary_union_errors(source, candidate, evaluate_edge, tolerance):

@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/KittyCAD/modeling-app",
+  "commit": "d01b321d5540cbcc59d8d7941cfb6056bbe1c91b",
+  "license": "MIT",
+  "copied": [
+    "src/colors.css",
+    "src/components/CustomIcon.tsx",
+    "src/components/ActionIcon.tsx",
+    "src/components/constraintIconPaths.ts",
+    "tailwind.config.js",
+    "public/fonts/inter/InterVariable.woff2",
+    "public/fonts/inter/InterVariable-Italic.woff2"
+  ],
+  "adapted": [
+    "src/components/ActionButton.tsx",
+    "src/components/layout/Panel/index.tsx",
+    "src/components/layout/Panel/index.module.css",
+    "src/components/ExchangeCard.tsx",
+    "src/lib/zookeeper/components/ZookeeperConversation.tsx",
+    "src/lib/zookeeper/components/ZookeeperConversationWelcome.tsx",
+    "src/lib/layout/configs/zookeeperFocus.ts"
+  ],
+  "localChanges": "Imports localized; CustomIcon glyphs default to aria-hidden because Studio labels the containing controls. Presentation callbacks and text are simulation-specific.",
+  "integration": "Zoo presentation adapted to the existing CAD ChatWorkspace, ChatAgent and Ansys worker. No Zoo account, geometry engine, CAD editing tools or billing integration."
+}

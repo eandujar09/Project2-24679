@@ -179,45 +179,51 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len(self.workspace.projects()), 1)
 
     def test_gradio_construction_and_callback_workflow(self):
+        import uuid
+        import gradio as gr
         from gradio_app.app import build_app
         app = build_app(self.workspace)
         callbacks = {fn.fn.__name__: fn.fn for fn in app.fns.values() if fn.fn}
-        opened = callbacks["open_file"](str(self.box))
-        self.assertEqual(len(opened), 18)
-        result = callbacks["write_comment"](self.mid, self.key, None, "From native Gradio")
-        self.assertEqual(result[0], self.mid)
-        record = self.workspace.get(self.mid)["comments"][0]
-        edit = callbacks["navigate_comment"](self.mid, record["id"])
-        self.assertEqual(edit[8], "From native Gradio")
-        result = callbacks["write_condition"](self.mid, self.key, None, "force", 1, 2, 3, 0)
-        self.assertIn("1 conditions", result[7])
-        import gradio as gr
-        picked = callbacks["pick_face"](self.mid, gr.EventData(None, {"modelId": self.mid, "faceKey": self.key}))
-        self.assertEqual(json.loads(picked[1])["selected"], self.key)
-        stale = callbacks["pick_face"](self.mid, gr.EventData(None, {"modelId": "old-model", "faceKey": self.key}))
+        sid = uuid.uuid4().hex
+        opened = callbacks["open_file"](str(self.box), sid)
+        self.assertEqual(len(opened), 9)
+        selected = callbacks["select_face"](self.key, sid)
+        self.assertEqual(json.loads(selected[0])["selected"], self.key)
+        picked = callbacks["pick_face"](sid, gr.EventData(None, {"modelId": self.mid, "faceKey": self.key}))
+        self.assertEqual(json.loads(picked[0])["selected"], self.key)
+        stale = callbacks["pick_face"](sid, gr.EventData(None, {"modelId": "old-model", "faceKey": self.key}))
         self.assertTrue(all(value == gr.skip() for value in stale))
 
-    def test_live_gradio_upload_and_save(self):
+    def test_live_gradio_upload_and_chat(self):
         from gradio_client import Client, handle_file
         from gradio_app.app import build_app
         from gradio_app.viewer import STATIC
-        app = build_app(self.workspace)
+        class Model:
+            def complete(_, session, prompt):
+                payload = json.loads(prompt.split("CAD_REQUEST_JSON\n", 1)[1])
+                context = payload["context"]
+                if not payload["toolObservationsThisTurn"]:
+                    return json.dumps({"reply": "Adding your note.", "action": {"tool": "add_comment", "arguments": {
+                        "model_id": context["modelId"], "revision": context["revision"],
+                        "face_key": context["selectedFace"]["key"], "text": "Live chat comment"}}})
+                return json.dumps({"reply": "Your note is saved.", "action": None})
+        app = build_app(self.workspace, chat_model=Model())
         try:
-            _, url, _ = app.queue().launch(
-                server_name="127.0.0.1", prevent_thread_lock=True, quiet=True,
-                allowed_paths=[str(STATIC), str(self.workspace.root / "previews"), str(self.workspace.root / "exports")],
-            )
+            _, url, _ = app.queue().launch(server_name="127.0.0.1", prevent_thread_lock=True, quiet=True,
+                allowed_paths=[str(STATIC), str(self.workspace.root / "previews"), str(self.workspace.root / "exports")])
             client = Client(url, verbose=False)
-            result = client.predict(handle_file(str(self.box)), api_name="/open_file")
-            self.assertTrue(any(isinstance(value, str) and "6 faces" in value for value in result))
-            client.predict(self.key, None, "Live API comment", api_name="/write_comment")
-            record = self.workspace.get(self.mid)["comments"][0]
-            self.assertEqual(record["text"], "Live API comment")
-            client.predict(record["id"], api_name="/navigate_comment")
-            client.predict(self.key, record["id"], "Edited via API", api_name="/write_comment")
-            self.assertEqual(self.workspace.get(self.mid)["comments"][0]["text"], "Edited via API")
-            client.predict(self.key, None, "pressure", 0, 0, 0, -2, api_name="/write_condition")
-            self.assertEqual(self.workspace.get(self.mid)["boundaryConditions"][0]["values"], {"magnitude": -2})
+            client.predict(handle_file(str(self.box)), api_name="/open_file")
+            client.predict(self.key, api_name="/select_face")
+            context = client.predict(api_name="/read_cad_context")
+            self.assertEqual(context["selectedFace"]["key"], self.key)
+            second_client = Client(url, verbose=False)
+            second = second_client.predict(api_name="/read_cad_context")
+            self.assertIsNone(second["selectedFace"])
+            self.assertNotEqual(second["sessionId"], context["sessionId"])
+            client.predict("Add a note to this face", api_name="/respond")
+            self.assertEqual(self.workspace.get(self.mid)["comments"], [])
+            client.predict("Confirm", api_name="/respond")
+            self.assertEqual(self.workspace.get(self.mid)["comments"][0]["text"], "Live chat comment")
         finally:
             app.close()
 

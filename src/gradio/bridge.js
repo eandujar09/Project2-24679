@@ -23,6 +23,8 @@ export function mount(element, props, trigger, watch) {
   let conditionsJSON;
   let state = {};
   let viewer;
+  let appliedRevision = -1;
+  let focusToken = null;
   const report = message => { status.textContent = message; };
   const emit = key => {
     if (loading || !currentModel || disposed) return;
@@ -49,6 +51,8 @@ export function mount(element, props, trigger, watch) {
     const token = ++version;
     try {
       state = props.value ? JSON.parse(props.value) : {};
+      if (state.revision != null && state.revision < appliedRevision) return;
+      appliedRevision = state.revision ?? appliedRevision;
       if (!state.modelId) { report('Open a STEP model to begin.'); return; }
       if (currentModel !== state.modelId || loadedUrl !== state.geometryUrl) {
         controller?.abort();
@@ -71,7 +75,14 @@ export function mount(element, props, trigger, watch) {
         conditionsJSON = nextConditions;
       }
       viewer.select(state.selected || null);
-      if (state.focus && state.selected) viewer.focus(state.selected);
+      viewer.highlight(state.highlighted || []);
+      const nextFocus = state.focusToken ?? null;
+      if (state.focusFace && nextFocus !== focusToken) viewer.focus(state.focusFace);
+      else if (state.focus && state.selected && nextFocus !== focusToken) viewer.focus(state.selected);
+      focusToken = nextFocus;
+      container.dataset.selectedFace = state.selected || '';
+      container.dataset.highlightedFaces = JSON.stringify(state.highlighted || []);
+      container.dataset.sessionId = state.sessionId || '';
       report(`${viewer.faces.size} CAD faces · click a face to select · drag to orbit · right-drag to pan · scroll to zoom`);
     } catch (error) {
       if (error.name !== 'AbortError' && token === version) report(`CAD preview: ${error.message}`);

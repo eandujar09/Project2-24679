@@ -1,0 +1,143 @@
+import { test, expect } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+
+let fixture;
+test.beforeAll(() => {
+  const directory = path.resolve('test-results/studio-fixtures');
+  mkdirSync(directory, { recursive: true });
+  fixture = path.join(directory, 'cylinder.step');
+  const python = process.env.GRADIO_TEST_PYTHON || '.venv-gradio/bin/python';
+  execFileSync(python, ['-c', `
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
+import sys
+writer = STEPControl_Writer()
+writer.Transfer(BRepPrimAPI_MakeCylinder(5, 20).Shape(), STEPControl_AsIs)
+writer.Write(sys.argv[1])
+`, fixture]);
+});
+
+async function state(page) {
+  return page.evaluate(async () => (await fetch('/api/studio/sessions/' + sessionStorage.getItem('studio-session'))).json());
+}
+async function settled(page) {
+  await expect.poll(async () => (await state(page)).busy).toBe(false);
+}
+async function send(page, text) {
+  await settled(page);
+  await page.getByRole('textbox', { name: 'Message the assistant' }).fill(text);
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Message the assistant' })).toHaveValue('');
+  await settled(page);
+}
+async function selectFace(page, index) {
+  await page.getByRole('button', { name: 'Model', exact: true }).click();
+  await page.locator('.face-row').filter({ has: page.getByText(`Face ${index}`, { exact: true }) }).click();
+  await expect(page.getByTestId('selected-face')).toContainText('Face ' + index);
+  await page.getByRole('button', { name: 'Close Model', exact: true }).click();
+  await settled(page);
+}
+async function confirm(page) {
+  await expect(page.getByTestId('confirmation-card')).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(page.getByTestId('confirmation-card')).toHaveCount(0);
+  await settled(page);
+}
+
+test('Shared face state, chat confirmations, generated code and result downloads', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('.studio-app')).toHaveAttribute('data-session-id', /[a-f0-9]{32}/);
+  await page.getByLabel('Upload STEP file').setInputFiles(fixture);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await page.getByTestId('cad-viewport').locator('canvas').click();
+  await expect(page.getByTestId('selected-face')).toBeVisible();
+  await settled(page);
+  await selectFace(page, 1);
+  const first = await state(page);
+  const context = await page.evaluate(async uri => {
+    const r = await fetch('/mcp/', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'resources/read', params: { uri } }) });
+    return JSON.parse((await r.json()).result.contents[0].text);
+  }, first.context.uri);
+  expect(context.selectedFace.key).toBe(first.context.selectedFace.key);
+
+  await send(page, 'Fix this face');
+  expect((await state(page)).context.boundaryConditions).toHaveLength(0);
+  await confirm(page);
+  await expect.poll(async () => (await state(page)).context.boundaryConditions.length).toBe(1);
+  await send(page, 'Highlight face 2');
+  await expect(page.locator('.highlight-info')).toContainText('Face 2');
+  await expect(page.getByTestId('selected-face')).toContainText('Face 1');
+  await selectFace(page, 2);
+  await send(page, 'Apply 100 N along +Z');
+  await confirm(page);
+  await send(page, 'Use Structural Steel and small deformations');
+  await confirm(page);
+  await page.getByRole('button', { name: 'Simulation setup', exact: true }).click();
+  await expect(page.locator('.condition-row')).toHaveCount(2);
+  await expect(page.locator('.setup-details')).toContainText('Structural Steel');
+  await page.getByRole('button', { name: 'Close Simulation setup' }).click();
+
+  await send(page, 'Compare mesh sizes and check convergence');
+  await expect(page.locator('.message-code')).toContainText('Generated mesh study');
+  expect((await state(page)).context.lastResult).toBeNull();
+  await confirm(page);
+  await expect(page.locator('.message-image img')).toHaveCount(2);
+  await expect(page.locator('.message-image img').first()).toBeVisible();
+  expect(await page.locator('.message-image img').first().evaluate(im => im.complete && im.naturalWidth > 0)).toBe(true);
+  await expect(page.locator('.markdown table')).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Download simulation', exact: true }).click();
+  expect((await downloadPromise).suggestedFilename()).toBe('simulation.zip');
+  const sid = (await state(page)).context.sessionId;
+  await page.reload();
+  await expect(page.locator('.message-image img')).toHaveCount(2);
+  expect((await state(page)).context.sessionId).toBe(sid);
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'New conversation', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Let’s set up your simulation.' })).toBeVisible();
+  const after = await state(page);
+  expect(after.context.boundaryConditions).toHaveLength(2);
+  expect(after.context.programAttempts).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+test('Included simple bracket, camera tools, layout, theme and mobile', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('.studio-app')).toHaveAttribute('data-session-id', /[a-f0-9]{32}/);
+  await page.screenshot({ path: 'test-results/studio-empty.png' });
+  const bracket = path.resolve('examples/simple-bracket/simple-bracket.step');
+  await page.getByLabel('Upload STEP file').setInputFiles(bracket);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await expect(page.locator('.model-caption')).toContainText('9 faces');
+  await page.getByRole('button', { name: 'Top view', exact: true }).click();
+  await page.getByRole('button', { name: 'Isometric view', exact: true }).click();
+  await page.screenshot({ path: 'test-results/studio-bracket.png' });
+  const imagePromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save viewport image', exact: true }).click();
+  expect((await imagePromise).suggestedFilename()).toBe('cad-view.png');
+  await page.getByRole('separator').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('separator')).toHaveAttribute('aria-valuenow', '48');
+  await page.getByRole('button', { name: 'Toggle assistant', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Simulation assistant' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Toggle assistant', exact: true }).click();
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Light', exact: true }).click();
+  await page.getByRole('button', { name: 'Close Settings' }).click();
+  await expect(page.locator('html')).not.toHaveClass('dark');
+  await page.screenshot({ path: 'test-results/studio-light.png' });
+  await page.getByRole('button', { name: 'Workspace settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Dark', exact: true }).click();
+  await page.getByRole('button', { name: 'Close Settings' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('textbox', { name: 'Message the assistant' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/studio-mobile.png' });
+  expect(errors).toEqual([]);
+});

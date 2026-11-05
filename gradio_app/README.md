@@ -1,120 +1,204 @@
-# Gradio + Python CAD workspace
+# Chat-driven CAD workspace
 
-This implementation combines native Gradio controls and a Python backend with
-the original Three.js viewer. Only rendering, picking, and annotation graphics
-are reused, not the old UI, importer, or IndexedDB workflows. Python supplies
-the geometry and authoritative face IDs. The standalone Vite app still works.
+Start the Mac app with `../Start Mac App.command` or, from the repository root:
 
-## Run (Python 3.11 or 3.12 recommended)
-
-From the repository root in PowerShell:
-
-```powershell
-python -m venv .venv-gradio
-.\.venv-gradio\Scripts\python.exe -m pip install -r requirements-gradio.txt
-npm.cmd install
-.\.venv-gradio\Scripts\python.exe -m gradio_app.app
+```sh
+npm run build:studio
+./.venv-gradio/bin/python scripts/run_mac.py
 ```
 
-Open http://127.0.0.1:7860. Node.js is needed to build the reused viewer. Startup
-automatically runs `npm.cmd run build:gradio` when its bundle is missing or stale.
-The bundle is served by Gradio; no separate Vite server or CDN is needed.
-Review/annotation needs no Ansys installation or license; simulation requires
-Mechanical 261 and a usable license. On macOS/Linux use
-`.venv-gradio/bin/python` and `npm` instead. Options:
-`--port 7861 --data-dir path/to/data`. `STEP_GRADIO_DATA` also sets the data directory.
+Open <http://127.0.0.1:7860>. Setup and remote worker deployment are described in
+[MAC_REMOTE_SETUP.md](../MAC_REMOTE_SETUP.md).
 
-## Workflow
+The root page serves the Zoo-derived React frontend in `src/studio`; its HTTP
+adapter is `gradio_app/studio.py`. Both it and the retained Gradio API use the
+same `ChatWorkspace`, `ChatAgent`, confirmation gate, and MCP server. The adapter
+provides per-window sessions, CAD upload/selection, background chat turns,
+pollable snapshots, and scoped result downloads. It does not execute engineering
+tools directly. The Confirm button is bound to the exact pending proposal;
+message retries use request IDs to avoid duplicate execution. Chat sessions
+survive a page refresh while this process runs; saved CAD and conditions survive
+a server restart. New conversation preserves saved conditions and job records.
 
-1. Upload a STEP file. Python OpenCascade imports the original B-rep, converts
-   lengths to mm, and tessellates each original face separately.
-2. Hover over geometry to preview a whole face in teal; click to select it in
-   amber. **Select whole CAD face** remains available for keyboard navigation.
-   Drag to orbit, right-drag to pan, and scroll to zoom. **Fit model** and
-   **Reset view** reframe the model. Empty clicks, **Clear face**, or Escape
-   with the canvas focused clear selection. Orbit drags do not select faces.
-3. Save comments or apply fixed support, prescribed displacement (mm), total
-   face force (N), or signed pressure (MPa). Multiple records may share a face.
-4. Choose an existing annotation to navigate to its face and edit it. Choose
-   **New comment/condition** to stop editing. Changing faces clears all drafts.
-5. To delete, select the record, check its confirmation box, and delete.
-6. Refreshing the page clears session selection, not saved projects. Refresh
-   the saved-project list and reopen, or upload the same STEP bytes again.
-7. Export JSON for annotation backups. Import merges by record ID after validating
-   the whole file, model hash, values, and timestamps. Unmapped records remain
-   visible and deletable, but cannot silently attach to another face.
+## Interaction
 
-## Differences from the browser iteration
+Open a STEP file, click a whole CAD face on the left, and describe the analysis in
+the conversation on the right. The assistant asks for missing information, can highlight or frame candidate
+faces, and writes real PyMechanical Python for the current CAD and requested
+analysis. It can inspect the Mechanical object model, build analyses, change mesh
+controls, solve, export results, and revise its code from execution errors. A click is automatically reported to the assistant when it has asked you
+to select a face. Otherwise, your next message includes the latest selection.
 
-- The Gradio HTML bridge loads `src/gradio/bridge.js`, which imports the same
-  `src/viewer/scene.js` as the standalone app. Picks flow through Gradio events,
-  not DOM scraping or a separate API client. Python validates picked face keys
-  and ignores clicks queued before another model replaced the current one.
-- Python's geometry cache produces an indexed mesh with explicit inclusive
-  triangle ranges and face identities. JavaScript does not re-import STEP or
-  invent its own IDs. The original viewer accepts these external identities.
-- Hover, click picking, camera controls, condition tints, directional arrows,
-  support glyphs, and camera-tracked labels are available. Selection and annotation
-  updates preserve the camera and canvas; dropdown/annotation navigation frames
-  the destination face.
-- Processing and persistence are **server-side**, not IndexedDB. The default
-  server is loopback-only, with no public sharing. Do not expose it as a multiuser
-  service without authentication and per-user project isolation. All local users
-  of this server share saved projects.
-- SQLite stores documents; original STEP bytes, mesh caches, viewer geometry, and
-  JSON downloads live in `gradio-data/`. Back up this directory and retain the
-  original STEP. Previews/exports accumulate; stop the app before clearing only
-  those two derived directories if needed. Original models and the DB are private;
-  only static viewer assets, previews, and exports are explicitly allowed for
-  Gradio downloads.
-- Python face keys use `python-ocp-v1:face:N`, bound to the exact SHA-256 and
-  OpenCascade traversal. They are **not compatible** with the browser importer's
-  occurrence keys. Browser version-1/2 JSON imports as unmapped; no invented
-  cross-importer mapping is attempted. Do not upgrade the CAD importer and assume
-  cached face indices still match newly imported geometry.
-- No full assembly tree/name UI or comment pins are included. STEP
-  placements are applied when tessellating each face. Native imports are queued;
-  there is no worker cancellation for a running OpenCascade import.
+Example:
 
-## Ansys Mechanical simulation
+1. “This is Structural Steel. I want a linear static, small-deformation test.”
+2. Select the supported face: “Fully fix this face.” Review the violet highlight and explanation, then reply “Confirm.”
+3. Select the loaded face: “Apply a total 100 N in global +X.” Check the face, units and direction, then confirm.
+4. Ask for an analysis. Review its assumptions and proposed Python, then confirm that execution separately.
 
-The **Ansys Mechanical** accordion runs a deterministic single-solid linear
-static structural analysis using saved face annotations. It uses a separate
-PyMechanical interpreter, explicit Structural Steel material, mesh size, one
-solver core, and no weak springs. It displays deformation and von Mises stress
-contours and exports the complete run. See [`mechanical/README.md`](../mechanical/README.md)
-for the analysis contract, fail-closed face mapping, CLI commands, limitations,
-and actual Mechanical regression tests.
+The built-in chat requires a later user confirmation before applying settings,
+conditions or notes, removing conditions, or executing any Python or preset solve.
+This includes inspection scripts and corrected code after an error. A model reply,
+tool result or face click cannot approve a proposal. Corrections and questions
+discard the pending approval; changing the selection or setup invalidates it.
+Highlights can be shown immediately so the user can review the proposed face.
+The model is instructed to distinguish observed geometry from inferred purpose,
+explain uncertainty, and ask about engineering assumptions in short stages.
 
-**The PyMechanical environment is an input.** Enter its Python executable in
-**Mechanical Python executable**, or set `MECHANICAL_PYTHON` before app startup.
-The field is empty when that variable is unset; the app does not search personal
-directories or assume Gradio's environment includes PyMechanical. Install
-`requirements-mechanical.txt` in the supplied environment and ensure it can
-access Mechanical 261 and its license. See the [root setup example](../README.md#required-simulation-input-pymechanical-environment).
+Amber indicates the user's selected face. Violet indicates assistant highlights;
+highlighting never changes the selection. Support symbols and load arrows remain
+visible as saved conditions. The optional face-number picker supports keyboard
+selection. The generated Python appears in the conversation before execution. Each attempt
+returns actual stdout/errors, verified solve status, measured result tables,
+contour images, the Python source, and a downloadable project archive. For a
+mesh-convergence request the agent writes the refinement loop and comparison
+calculations; there is no hardcoded bracket analysis or mesh-study template.
 
-`backend.Workspace` is independent of Gradio. `project_snapshot(model_id)` exposes
-the exact model hash, comments, typed boundary conditions, explicit mm/N/MPa units,
-and each face's index, area, and centroid. The original STEP is at
-`workspace.root / "models" / f"{model_id}.step"`.
+## MCP interface
 
-The adapter imports that STEP in a fresh Mechanical process and resolves each
-face using area, centroid, exact interior surface samples, and outward normals.
-**OpenCascade keys are not Mechanical geometry IDs.** Ambiguous mappings stop
-the run; no arbitrary nearest-face fallback is used.
+The app mounts an official Python SDK Streamable HTTP MCP server at:
 
-## Tests
-
-```powershell
-.\.venv-gradio\Scripts\python.exe -m unittest discover -s tests/python -v
-npm.cmd test
-npx.cmd playwright install chromium
-npm.cmd run test:gradio
+```text
+http://127.0.0.1:7860/mcp/
 ```
 
-Tests generate real STEP boxes/cylinders with OpenCascade, verify whole curved
-faces and units/placements, round-trip native previews and annotations, reject
-invalid imports atomically, restore persisted projects, and construct the Gradio UI.
-Playwright starts an isolated Gradio server on port 7862 and verifies actual canvas
-picking, Gradio synchronization, boundary graphics, stable canvas mounting,
-dropdown navigation, and orbit-drag suppression.
+It binds only to loopback. Any local MCP client connected to this endpoint can
+read and control this app; exposing it on a network requires authentication.
+It does not connect to other Codex/ChatGPT clients automatically.
+The chat confirmation gate applies to the built-in conversation. Direct MCP tool
+calls are trusted-controller operations and execute after validation; external
+clients must implement their own user-confirmation workflow.
+
+Resources:
+
+| URI | Contents |
+| --- | --- |
+| `cad://sessions` | Open app sessions and their context URIs |
+| `cad://models` | Saved CAD models available to open |
+| `cad://runtime` | Generated-Python runtime API and resource limits |
+| `cad://session/{session_id}/context` | Model ID, revision, selected face, highlighted face keys, geometry descriptors, saved conditions/comments, analysis settings, missing inputs, and result status |
+| `cad://session/{session_id}/faces/{offset}` | A page of 100 exact face descriptors, for larger models |
+
+Read the context before each action. Resources are read on demand; this version
+does not advertise subscriptions or push resource-change notifications. The
+built-in chat host includes a fresh snapshot of the same resource state in every
+model request. The viewer polls state revisions to reflect external MCP changes.
+
+External MCP clients can use `open_saved_model(session_id, model_id, revision)`
+to open a saved model in a chosen window. This resets its conversation, so stale
+revisions and switches during an active chat/solve are rejected.
+
+The primary execution tool is `run_mechanical_code(session_id, model_id, revision,
+title, objective, code)`. It executes the exact generated source in a fresh
+Mechanical job. It needs an uploaded model; it does not require the legacy
+steel/static setup. An inspection script can run without any loads.
+
+Other tools: `highlight_faces`, `set_analysis`, `apply_condition`, `remove_condition`,
+`add_comment`, and `run_simulation`. Each requires `session_id`, the current
+`model_id`, and current `revision`, plus its tool-specific fields. Highlighting
+accepts `face_keys` and optional `focus`; an empty list clears highlights.
+`apply_condition` accepts `kind`, `face_key`, `values`, and an optional `record_id`
+when editing. Force/displacement values use global `x`, `y`, `z`; pressure uses
+`magnitude`. Units are mm, N, and MPa, with positive pressure inward.
+
+The server rejects stale revisions, unknown faces, unsupported physics,
+conflicting conditions, accidental duplicate loads, and incomplete simulations.
+Identical consecutive solver submissions are not automatically repeated. A
+changed setup clears its current result; old images remain labeled as historical
+input snapshots in the chat. Dropped jobs can be recovered using the documented
+`remote-job.py` helper.
+
+## Model and solver boundary
+
+`chat_agent.py` sends the conversation, current CAD state, runtime guide, and prior
+tool outputs to the model already configured on OpenCode. The model proposes
+Python in `run_mechanical_code`; it is not selecting a fixed analysis template.
+The local host validates the revision, syntax and size, saves the exact source,
+and submits it through the existing authenticated transport. The remote worker
+starts a fresh PyMechanical App, imports the exact STEP, attempts exact face
+mapping, and executes the source with Mechanical globals plus `ctx` helpers.
+
+The helpers provide face selections, mesh/solve resource checks, measured result
+extraction, viewport images, comparison tables, and artifact paths. The script
+itself creates the analysis and chooses material, boundary conditions, meshing,
+results and refinement logic. It can inspect public Mechanical members at
+runtime. No analysis type or material is preselected by this execution path.
+
+The agent reads actual errors and may revise its source up to three attempts per
+user turn. Identical submissions are deduplicated; an uncertain transport job
+blocks further submissions in that conversation until recovered. The
+`recover_mechanical_run` tool checks/downloads that existing job without executing
+new code; the agent can invoke it directly from chat. A successful
+Python process and a successful solver run are reported separately. Every
+attempt has its own source, input snapshot, log, report and project archive.
+
+Execution uses a separate process with a 15-minute limit, one CPU, no GPU, and a
+32,000-node/element cap per solve. Basic source checks reject system/network
+imports, direct file I/O, private Python access, nested scripts and unchecked
+Solve calls. Use `ctx.solve` and artifact helpers. **These checks are not a
+security sandbox:** Mechanical has a broad object model and execution uses the
+remote worker account's permissions. The model is instructed to operate only on
+the current fresh job, never other files/projects. Provider credentials are not
+included in the model prompt or job archive.
+
+The model sees CAD metadata and conversation/annotations. The STEP file and
+model-authored code go to the configured remote worker. The viewer currently
+accepts STEP/STP, not every native CAD format. Arbitrary STEP geometry may be
+inspected; multi-body contacts, materials, shell thicknesses and physics still
+need valid code, suitable assumptions, and the installed solver/license. Where
+cross-kernel mapping is ambiguous, clicked-face scoping fails explicitly; the
+agent must inspect or ask rather than invent a mapping.
+
+The previous single-solid/Structural-Steel/static solver remains as the optional
+`run_simulation` preset. Its `set_analysis` fields and `legacyPreset` context
+requirements apply only to that preset. The chatbot now defaults to generated
+Python and does not silently fall back to the preset.
+
+Per-window chat, selection and attempt summaries live in memory. CAD uploads,
+annotations and all job files persist under `gradio-data/`. Reopen a saved model
+after refreshing; historical job folders and recovery records remain available.
+
+## Development and checks
+
+Python OpenCascade owns CAD identity and geometry. The Three.js viewer reuses the
+same canvas while selection/highlights/conditions update. After viewer changes:
+
+```sh
+npm run build:gradio
+```
+
+Restart the app after Python changes. Chat/MCP/UI changes require no remote worker
+deployment. Solver changes require deploying `mechanical/` as described in the
+Mac setup guide.
+
+```sh
+./.venv-gradio/bin/python -m unittest discover -s tests/python -v
+npm test
+npm run build:gradio
+npm run test:gradio
+```
+
+The browser suite runs a separate fixture server on port 7862 with a deterministic
+test model and images explicitly marked SYNTHETIC UI TEST. It checks selection, generated Python display/source download, comparison tables,
+MCP resource synchronization, independent highlights, supports/loads, result
+images, and canvas preservation. The Python suite exercises real MCP HTTP calls
+and chat/solver validation. A separate live OpenCode-model-to-Ansys test was
+verified on November 4, 2026; details are in the Mac setup guide.
+
+### Verified generated-code bracket study
+
+On November 4, 2026, the connected OpenCode model wrote a fresh bracket analysis
+and mesh-refinement loop, and Mechanical 261 executed all three meshes:
+
+| Element size (mm) | Nodes | Elements | Maximum displacement (mm) | Maximum stress (MPa) |
+| --- | ---: | ---: | ---: | ---: |
+| 6.0 | 7585 | 4182 | 0.0181027 | 29.1558 |
+| 4.5 | 9128 | 5053 | 0.0181910 | 28.8158 |
+| 3.5 | 11711 | 6556 | 0.0182576 | 30.2797 |
+
+The final stress change was 5.0802%, so the 5% joint displacement/stress criterion
+was not met. After a result-transfer interruption, the model used the recovery
+tool to retrieve the same job without another solve and correctly reported
+non-convergence. This was a live model/solver test; browser fixtures are separate
+and explicitly synthetic. Source, actual tables and images are saved in the
+workspace's `outputs/bracket-agent-demo/` deliverable folder.

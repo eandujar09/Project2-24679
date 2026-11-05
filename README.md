@@ -1,50 +1,82 @@
-# STEP Face Comments
+# CAD Simulation Studio
 
 A local-first browser workspace for reviewing STEP CAD models and attaching comments and boundary conditions to **whole original B-rep faces**. Implemented from [`STEP_FACE_COMMENTS.md`](./STEP_FACE_COMMENTS.md).
 
-## Python / native Gradio iteration
+## Develop on a Mac, run Ansys remotely
 
-A Gradio app with Python OpenCascade processing and server-side persistence is
-available in [`gradio_app/`](./gradio_app/README.md). It reuses the interactive
-viewer for whole-face click picking and boundary-condition graphics, while Python
-owns geometry, face IDs, and storage. A [deterministic Mechanical runner](./mechanical/README.md)
-can apply saved conditions, solve a single-solid static structural analysis, and
-display deformation/stress results in Gradio.
-See its README for setup, differences, and tests.
+Use [`MAC_REMOTE_SETUP.md`](./MAC_REMOTE_SETUP.md) for the local development setup.
+The Gradio app supports running its existing Mechanical worker through OpenCode's API,
+including private file transfer, job identity checks, and result downloads.
+The Mac runs the CAD workspace; the remote Ansys computer does the simulation.
+Open **Start Mac App.command** after installing the local dependencies.
+The remote portal login and Python/worker paths must be configured before a real
+remote simulation can run. No SSH or browser automation is required. The standalone browser-only Vite app does not submit
+Mechanical jobs.
 
-### Required simulation input: PyMechanical environment
+## Simulation Studio frontend
 
-The **PyMechanical Python environment is a user-provided input**, not bundled
-with this repository. Annotation alone does not require it. To run simulations,
-install Ansys Mechanical **2026 R1 (261)** with a usable license and create or
-reuse a compatible Python environment containing `requirements-mechanical.txt`:
+For an easy first run, import the included
+[`simple-bracket.step`](./examples/simple-bracket/simple-bracket.step).
+It has nine faces and one clear mounting face and loading face. Follow the
+[guided demo prompts](./examples/simple-bracket/README.md) to highlight, confirm,
+and analyze it through the chatbot.
 
-```powershell
-python -m venv .venv-mechanical
-.\.venv-mechanical\Scripts\python.exe -m pip install -r requirements-mechanical.txt
-$env:MECHANICAL_PYTHON = (Resolve-Path .\.venv-mechanical\Scripts\python.exe).Path
-.\.venv-gradio\Scripts\python.exe -m gradio_app.app
-```
+The default app at <http://127.0.0.1:7860/> uses a React interface adapted from
+[Zoo Design Studio](https://github.com/KittyCAD/modeling-app), with its Inter font,
+color tokens, icons, panel styling, conversation bubbles and composer. The
+viewport and chat share the existing simulation state. View controls, face
+selection, saved setups, generated Python and results are available from compact
+side panels. The frontend does not include CAD modeling or geometry editing.
 
-Set up `.venv-gradio` first using the [Gradio instructions](./gradio_app/README.md).
-Alternatively, enter the interpreter path directly in **Mechanical Python
-executable** in the app. Without `MECHANICAL_PYTHON`, this field starts empty;
-there is no automatic search of personal directories. The interpreter must have
-PyMechanical installed and access to Mechanical and its license. On macOS/Linux,
-virtual environments use `bin/python`; Mechanical execution still requires a
-supported Ansys host. See the [Mechanical guide](./mechanical/README.md).
+After frontend edits, run `npm run build:studio` and refresh the app. The backend
+must be restarted after Python changes. `scripts/setup-mac.sh` builds both the
+Studio frontend and the retained Gradio viewer. Browser checks for Studio run
+with `npx playwright test --config playwright.studio.config.js`; their solver
+results are explicitly synthetic and do not consume an Ansys license.
+
+Upstream code is pinned to `d01b321d5540cbcc59d8d7941cfb6056bbe1c91b`.
+The MIT notice, Inter font license, and a record of adapted files are retained in
+[`src/studio/vendor/zoo`](./src/studio/vendor/zoo). Zoo's engine, authentication,
+and CAD editing state machines are not part of this integration.
+
+## Chat-driven CAD workspace and MCP
+
+Simulation Studio places the CAD viewer on the left and a simulation chatbot on the
+right. Click a face and say “fix this face,” describe a load on another face, and
+answer the assistant's questions. The assistant writes actual PyMechanical
+Python for the uploaded geometry, executes it remotely, reads errors/results, and
+revises its code. It can write mesh-refinement loops and return measured
+comparison tables and plots. Generated source and per-attempt artifacts are
+visible and downloadable in the chat. Face highlighting and saved conditions
+remain connected to the viewer.
+
+The authoritative selection, highlights, face metadata, conditions, analysis
+settings, and result status are also available as MCP resources at
+`http://127.0.0.1:7860/mcp/`. The built-in chat host uses the same resource state
+before each model step and the same validated tools as external MCP clients.
+See [Chat and MCP](./gradio_app/README.md) for resource URIs, tools, architecture,
+and the supported analysis scope.
+
+The generated-code path supports analyses expressible with the installed
+Mechanical **2026 R1 (261)** APIs and license; geometry, material, contacts and
+physics still need a valid setup. It is not restricted to steel or a particular
+part. The older single-solid steel/static preset is retained separately. The
+viewer accepts STEP/STP. Each job has a 15-minute timeout, one CPU, and a
+32,000-node/element limit; see the runtime guide for execution boundaries. The Mac uses the model already configured on OpenCode;
+see [private connection setup](./MAC_REMOTE_SETUP.md). The standalone Vite app
+below remains a local annotation viewer with manual controls.
 
 ### Publishing this repository
 
 Virtual environments, dependencies, build outputs, test artifacts, and local
 CAD/annotation/simulation data are excluded by `.gitignore`. Keep local interpreter
-paths in your shell environment or the app input, not in committed source files.
+paths in your shell environment or ignored local configuration, not in committed source files.
 Before pushing, review `git status --short` and the staged files. Do not force-add
 `gradio-data/` or `test-results/`: their models, databases, reports, and archives
 can contain private CAD data and absolute local paths. Custom `--data-dir` or CLI
 output directories should be outside the repository or added to `.gitignore`.
 
-## Run locally
+## Run the standalone annotation viewer locally
 
 Requires Node.js 20.19+ or 22.12+ (Node 24 is supported).
 
@@ -62,7 +94,7 @@ npm.cmd run preview
 
 Vite emits the importer JavaScript and WebAssembly into `dist/assets`. Serve the built `dist` directory over HTTP(S); opening `index.html` as a `file://` URL is unsupported. Use localhost or HTTPS for SHA-256 and UUID browser APIs.
 
-## Using the workspace
+## Using the standalone annotation viewer
 
 1. Choose **Open STEP**, or drop a `.step` / `.stp` file into the page.
 2. Drag to orbit, right-drag to pan, and scroll to zoom. **Fit model** keeps the current viewing direction; **Reset view** restores the default direction.

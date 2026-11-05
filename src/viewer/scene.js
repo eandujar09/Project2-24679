@@ -37,6 +37,8 @@ export class Viewer {
     this.boundaryRaycaster = new THREE.Raycaster();
     this.hoverOverlay = this.createOverlay(0x72e3d0, 0.36);
     this.selectedOverlay = this.createOverlay(0xffc76a, 0.6);
+    this.assistantOverlays = [];
+    this.assistantKeys = [];
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     const canvas = this.renderer.domElement;
@@ -69,6 +71,7 @@ export class Viewer {
     this.resize.observe(container);
     this.renderer.setAnimationLoop(() => {
       this.controls.update();
+      this.updateClipping();
       this.renderer.render(this.scene, this.camera);
       this.positionBoundaryLabels();
     });
@@ -122,6 +125,7 @@ export class Viewer {
     }
     this.select(null);
     this.hover(null);
+    this.highlight([]);
     this.setBoundaryConditions([]);
     // Overlay buffers are shared with model meshes. Release their binding state
     // only when replacing the model, never on a hover/selection transition.
@@ -136,6 +140,7 @@ export class Viewer {
     this.faces = faces;
     this.meshes = meshes;
     this.bounds = new THREE.Box3().setFromObject(group);
+    this.boundingSphere = this.bounds.getBoundingSphere(new THREE.Sphere());
     this.fit(true);
   }
 
@@ -165,7 +170,25 @@ export class Viewer {
     this.selected = key;
     this.overlay(this.selectedOverlay, key);
     this.overlay(this.hoverOverlay, this.hovered === key ? null : this.hovered);
+    this.assistantOverlays.forEach((overlay, index) => this.overlay(overlay, this.assistantKeys[index] === key ? null : this.assistantKeys[index]));
     for (const entry of this.boundaryLabelEntries) entry.element.classList.toggle('selected', entry.faceKey === key);
+  }
+
+  highlight(keys) {
+    const unique = [...new Set(keys)].filter(key => this.faces.has(key));
+    if (JSON.stringify(unique) === JSON.stringify(this.assistantKeys)) return;
+    this.assistantOverlays.forEach(mesh => {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    });
+    this.assistantKeys = unique;
+    this.assistantOverlays = unique.map(key => {
+      const mesh = this.createOverlay(0xa78bfa, 0.48);
+      mesh.renderOrder = 1;
+      this.overlay(mesh, key === this.selected ? null : key);
+      return mesh;
+    });
   }
 
   setBoundaryConditions(conditions) {
@@ -245,6 +268,21 @@ export class Viewer {
 
   fit(reset = false) { this.frame(this.bounds, reset); }
   focus(key) { this.frame(this.faces.get(key)?.box); }
+
+  updateClipping() {
+    if (!this.boundingSphere) return;
+    const { center, radius } = this.boundingSphere;
+    const distance = this.camera.position.distanceTo(center);
+    // Keep the complete model in view while using a tight depth range. The
+    // old 100,000,000:1 range made thin/curved faces visibly fight for depth.
+    const near = Math.max(distance - radius * 1.2, radius * 0.0001, 0.000001);
+    const far = Math.max(distance + radius * 2, near * 2);
+    if (this.camera.near !== near || this.camera.far !== far) {
+      this.camera.near = near;
+      this.camera.far = far;
+      this.camera.updateProjectionMatrix();
+    }
+  }
 
   dispose() {
     this.renderer.setAnimationLoop(null);

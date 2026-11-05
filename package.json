@@ -10,15 +10,24 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/unit.test.js",
     "test:browser": "playwright test",
-    "test:gradio": "playwright test --config playwright.gradio.config.js"
+    "test:gradio": "playwright test --config playwright.gradio.config.js",
+    "build:studio": "vite build --config vite.studio.config.js"
   },
   "dependencies": {
     "idb": "^8.0.3",
     "occt-import-js": "^0.0.23",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@headlessui/tailwindcss": "^0.2.2",
     "@playwright/test": "^1.64.1",
+    "autoprefixer": "^10.6.2",
+    "postcss": "^8.5.32",
+    "tailwindcss": "3.4",
     "vite": "^7.1.7"
   }
 }

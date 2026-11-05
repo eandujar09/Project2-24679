@@ -24,6 +24,7 @@ def run(request_path, output, mapping_only=False):
     report = {"status": "failed", "modelId": request.get("modelId"), "analysis": "linear static structural",
               "settings": request.get("settings"), "requestSHA256": hashlib.sha256(request_path.read_bytes()).hexdigest()}
     app = None
+    analysis = None
     try:
         applied = validate_request(request)
         shutil.copy2(request_path, output / "request.json")
@@ -105,6 +106,9 @@ def run(request_path, output, mapping_only=False):
         config = ExtAPI.Application.SolveConfigurations["My Computer"]
         config.SolveProcessSettings.MaxNumberOfCores = 1
         config.SolveProcessSettings.DistributeSolution = False
+        # Device selection is independent of its count. Inherited NVIDIA
+        # settings can otherwise request GPU acceleration for a CPU-only job.
+        config.SolveProcessSettings.GPUAccelerationDevice = getattr(GPUAccelerationDevicesType, "None")
         config.SolveProcessSettings.NumberOfGPUDevices = 0
 
         def selection(ids):
@@ -150,6 +154,9 @@ def run(request_path, output, mapping_only=False):
         stress = analysis.Solution.AddEquivalentStress()
         stress.Name = "Equivalent von Mises stress (MPa)"
         print("Solving on one CPU core (weak springs off)", flush=True)
+        report["solverDirectory"] = str(analysis.WorkingDir)
+        report["solveProcessSettings"] = {"gpuDevice": str(config.SolveProcessSettings.GPUAccelerationDevice),
+                                          "gpuCount": config.SolveProcessSettings.NumberOfGPUDevices}
         analysis.Solution.Solve(True, config)
         report["solutionStatus"] = str(analysis.Solution.Status)
         report["messages"] = [{"severity": str(message.Severity), "text": str(message.DisplayString)}
@@ -184,6 +191,18 @@ def run(request_path, output, mapping_only=False):
             write_json(output / "mapping-diagnostics.json", exc.diagnostics)
         traceback.print_exc()
     finally:
+        # Mechanical's temporary solver folder can disappear when App closes.
+        # Keep diagnostic text for both successful and failed remote runs.
+        if analysis is not None:
+            try:
+                source = Path(str(analysis.WorkingDir))
+                target = output / "solver-logs"
+                for path in source.iterdir():
+                    if path.is_file() and path.suffix.lower() in (".out", ".err", ".log", ".txt"):
+                        target.mkdir(exist_ok=True)
+                        shutil.copy2(path, target / path.name)
+            except Exception as exc:
+                report["solverLogWarning"] = str(exc)
         write_json(output / "report.json", report)
         if app is not None:
             app.close()

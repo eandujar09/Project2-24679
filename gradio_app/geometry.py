@@ -79,6 +79,8 @@ def read_step(path: Path):
             "key": key, "index": index, "areaMm2": props.Mass(),
             "centroidMm": [center.X(), center.Y(), center.Z()],
             "triangleCount": len(triangles),
+            "surfaceType": str(BRepAdaptor_Surface(face).GetType()).split('GeomAbs_')[-1],
+            "boundsMm": mesh.bounds.tolist(),
         })
         explorer.Next()
     if not meshes:
@@ -151,7 +153,7 @@ def interior_surface_samples(face, target=9):
     return samples, "trimmed-uv-search"
 
 
-def mechanical_signatures(path):
+def mechanical_signatures(path, require_single_solid=True):
     """Exact interior surface samples for conservative cross-kernel matching."""
     shape = read_shape(path)
     solids = TopExp_Explorer(shape, TopAbs_SOLID)
@@ -159,7 +161,7 @@ def mechanical_signatures(path):
     while solids.More():
         count += 1
         solids.Next()
-    if count != 1:
+    if require_single_solid and count != 1:
         raise ValueError("The deterministic solver currently requires exactly one solid (no assemblies, shells, or beams).")
     signatures = []
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
