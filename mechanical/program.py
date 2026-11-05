@@ -84,6 +84,12 @@ analysis.Solution.AddEquivalentStress(); analysis.AddFixedSupport(); analysis.Ad
 force.DefineBy = LoadDefineBy.Components; force.XComponent.Output.DiscreteValues = [Quantity(100, 'N')]
 load.Location = ctx.selection([...]); Model.Mesh.ElementSize = Quantity(3, 'mm');
 Model.Mesh.ElementOrder = ElementOrder.Quadratic
+For gravity/self-weight use gravity = analysis.AddEarthGravity() and explicitly set
+gravity.Direction = GravityOrientationType.NegativeZAxis for downward gravity in the design frame.
+Use the agreed direction if different. Do not write EarthGravity X/Y/Z component fields: those
+are solver inertial acceleration inputs with the opposite sign to physical gravity. Direction
+uses the physical direction. The viewport previews explicit gravity code and reads actual
+gravity back from Mechanical after execution. Gravity is a whole-body load, not a face force.
 For static settings use analysis.IAnalysisSettings; set LargeDeflection/WeakSprings explicitly from intent.
 For remeshing use analysis.Solution.ClearGeneratedData(), Model.Mesh.ClearGeneratedData(), set a new
 ElementSize, ctx.generate_mesh(), then ctx.solve(analysis). Do not recreate the same loads on each loop.

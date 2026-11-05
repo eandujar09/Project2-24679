@@ -32,6 +32,12 @@ class ScriptedTestModel:
             name = 'pick_viewport_face'; args.update(frame_id=frame['id'], x=frame['width']/2, y=frame['height']/2)
         elif text.startswith('compare mesh sizes'):
             name = 'run_mechanical_code'; args.update(title='Generated mesh study', objective='Synthetic browser fixture', code="for size in [6, 4, 3]:\n    print(size)\n")
+        elif text.startswith('enable gravity') or text.startswith('reverse gravity') or text.startswith('disable gravity'):
+            direction = 'PositiveZAxis' if text.startswith('reverse') else 'NegativeZAxis'
+            code = "analysis = Model.AddStaticStructuralAnalysis()\ng = analysis.AddEarthGravity()\ng.Direction = GravityOrientationType." + direction + "\n"
+            if text.startswith('disable'):
+                code += 'g.Suppressed = True\n'
+            name = 'run_mechanical_code'; args.update(title='Gravity setup', objective='Synthetic gravity viewport fixture', code=code)
         elif text.startswith('fix this face'):
             name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'], kind='fixed', values={})
         elif text.startswith('fix the back face'):
@@ -86,6 +92,8 @@ def synthetic_code(workspace, model_id, program, selected_face):
     result['report'].update(kind='generated-python', title=program['title'], verifiedSolves=[{'status': 'Done'}]*3,
         tables={'Synthetic mesh comparison': [{'size_mm': n, 'nodes': 1000*i} for i,n in enumerate([6,4,3], 1)]},
         images=[{'file': Path(path).name, 'label': 'SYNTHETIC UI TEST'} for path in result['images']])
+    from mechanical.gravity import preview_gravity
+    result['report']['gravityLoads'] = [dict(row, source='mechanical') for row in preview_gravity(program['code'])]
     return result
 
 service = ChatWorkspace(workspace, runner=synthetic_solver, code_runner=synthetic_code)

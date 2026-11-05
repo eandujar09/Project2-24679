@@ -55,6 +55,63 @@ async function confirm(page) {
   await settled(page);
 }
 
+test('Gravity previews and applied arrows match the design axes through orbit, rejection and disabling', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('Upload STEP file').setInputFiles(path.resolve('examples/simple-bracket/simple-bracket.step'));
+  const viewport = page.getByTestId('cad-viewport');
+  await expect(viewport).toHaveAttribute('data-model-id', /.+/);
+  await expect(viewport).toHaveAttribute('data-design-axes', /"axis":"Z"/);
+  await expect(page.locator('.gravity-status')).toHaveCount(0);
+  await send(page, 'Enable gravity toward negative Z');
+  await expect(page.locator('.gravity-label.proposed')).toContainText('Proposed gravity · −Z');
+  await expect(page.locator('.gravity-label')).toHaveAttribute('data-gravity-vector', '[0,0,-9.80665]');
+  await expect(page.locator('.gravity-status')).toContainText('9.8066 m/s²');
+  await page.screenshot({ path: 'test-results/studio-gravity-proposed.png' });
+  await send(page, 'No, let me check');
+  await expect(page.locator('.gravity-label')).toHaveCount(0);
+  await send(page, 'Enable gravity toward negative Z');
+  await confirm(page);
+  await expect(page.locator('.gravity-label')).toHaveAttribute('data-condition-state', 'applied');
+  await page.getByRole('button', { name: 'Top view', exact: true }).click();
+  await expect.poll(async () => {
+    const axes = JSON.parse(await viewport.getAttribute('data-design-axes'));
+    return Math.hypot(...axes.find(a => a.axis === 'Z').screen.slice(0, 2));
+  }).toBeLessThan(.001);
+  const before = await viewport.getAttribute('data-design-axes');
+  await page.getByRole('button', { name: 'Isometric view', exact: true }).click();
+  await expect.poll(() => viewport.getAttribute('data-design-axes')).not.toBe(before);
+  const rect = await viewport.boundingBox();
+  await page.mouse.move(rect.x + rect.width * .5, rect.y + rect.height * .5);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + rect.width * .7, rect.y + rect.height * .6, { steps: 12 });
+  await page.mouse.up();
+  await expect(page.locator('.gravity-label')).toHaveAttribute('data-gravity-vector', '[0,0,-9.80665]');
+  await page.getByRole('button', { name: 'Isometric view', exact: true }).click();
+  await page.screenshot({ path: 'test-results/studio-gravity-applied.png' });
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save viewport image', exact: true }).click();
+  await (await download).saveAs('test-results/studio-gravity-viewport.png');
+  await send(page, 'Reverse gravity toward positive Z');
+  await expect(page.locator('.gravity-label.proposed')).toContainText('+Z');
+  await send(page, 'No, keep negative Z');
+  await expect(page.locator('.gravity-label')).toContainText('−Z');
+  await page.reload();
+  await expect(page.locator('.gravity-label')).toHaveAttribute('data-condition-state', 'applied');
+  await page.getByLabel('Assistant mode').selectOption('autonomous');
+  await send(page, 'Disable gravity');
+  await expect(page.locator('.gravity-label')).toHaveCount(0);
+  await expect(page.locator('.gravity-status')).toHaveCount(0);
+  await expect(viewport).toHaveAttribute('data-design-axes', /"axis":"X"/);
+  await send(page, 'Enable gravity toward negative Z');
+  await expect(page.locator('.gravity-label')).toHaveAttribute('data-condition-state', 'applied');
+  await page.getByLabel('Upload STEP file').setInputFiles(visualFixture);
+  await expect(page.locator('.gravity-label')).toHaveCount(0);
+  await expect(viewport).toHaveAttribute('data-design-axes', /"axis":"Z"/);
+  expect(errors).toEqual([]);
+});
+
 test('Shared face state, chat confirmations, generated code and result downloads', async ({ page }) => {
   // HTTP Tailscale addresses do not expose the secure-context randomUUID API.
   await page.addInitScript(() => Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined }));

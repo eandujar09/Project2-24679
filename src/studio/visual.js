@@ -15,7 +15,7 @@ export function captureFrame(scene, modelId) {
   scene.controls.update();
   scene.scene.updateMatrixWorld(true);
   scene.camera.updateMatrixWorld(true);
-  scene.renderer.render(scene.scene, scene.camera);
+  scene.render();
   const source = scene.renderer.domElement;
   if (!source.width || !source.height) throw new Error('The viewport is not visible.');
   const scale = Math.min(1, 1200 / Math.max(source.width, source.height));

@@ -214,6 +214,14 @@ def run(request_path, output):
                 print('Executing model-authored Python:', program['title'], flush=True)
                 stage = 'generated Python'
                 exec(compile(program['code'], str(code_path), 'exec'), ns)
+                from .gravity import read_gravity
+                try:
+                    report['gravityLoads'] = read_gravity(ns)
+                except Exception as exc:
+                    # A viewport readback must never turn a valid solve into a failure.
+                    from .gravity import preview_gravity
+                    report['gravityLoads'] = [dict(row, vector=None) for row in preview_gravity(program['code'])]
+                    report.setdefault('warnings', []).append('Gravity display: ' + str(exc))
                 stage = 'project export'
                 context.save_project()
                 from .native_exports import save_native_exports

@@ -4,6 +4,8 @@ import { buildFaceMap, meshOccurrences } from '../cad/faceMap.js';
 import { createBoundaryVisual } from './boundaryVisuals.js';
 import { conditionTypes, conditionSummary } from '../boundaries/conditions.js';
 import { faceFocusPose } from './faceFocus.js';
+import { OrientationAxes } from './orientationAxes.js';
+import { createGravityVisual, gravitySummary } from './gravityVisuals.js';
 
 export class Viewer {
   constructor(container, onSelect) {
@@ -15,10 +17,11 @@ export class Viewer {
     this.scene.background = new THREE.Color('#111d2c');
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.01, 100000);
     this.camera.up.set(0, 0, 1);
+    this.orientationAxes = new OrientationAxes();
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.domElement.setAttribute('aria-label', '3D CAD viewport. Drag to orbit, right drag to pan, scroll to zoom. Use the face list to select faces with a keyboard.');
+    this.renderer.domElement.setAttribute('aria-label', '3D CAD viewport with design axes: X red, Y green, Z blue. Drag to orbit, right drag to pan, scroll to zoom. Use the face list to select faces with a keyboard.');
     this.renderer.domElement.tabIndex = 0;
     container.prepend(this.renderer.domElement);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -36,6 +39,12 @@ export class Viewer {
     this.boundaryLabels.className = 'boundary-labels';
     container.append(this.boundaryLabels);
     this.boundaryLabelEntries = [];
+    this.gravityGroup = new THREE.Group();
+    this.scene.add(this.gravityGroup);
+    this.gravityLabels = document.createElement('div');
+    this.gravityLabels.className = 'boundary-labels gravity-labels';
+    container.append(this.gravityLabels);
+    this.gravityLabelEntries = [];
     this.boundaryRaycaster = new THREE.Raycaster();
     this.hoverOverlay = this.createOverlay(0x72e3d0, 0.36);
     this.selectedOverlay = this.createOverlay(0xffc76a, 0.6);
@@ -75,9 +84,14 @@ export class Viewer {
       this.updateFocus();
       this.controls.update();
       this.updateClipping();
-      this.renderer.render(this.scene, this.camera);
+      this.render();
       this.positionBoundaryLabels();
     });
+  }
+
+  render() {
+    this.renderer.render(this.scene, this.camera);
+    this.orientationAxes.render(this.renderer, this.camera, this.container);
   }
 
   createOverlay(color, opacity) {
@@ -130,6 +144,7 @@ export class Viewer {
     this.hover(null);
     this.highlight([]);
     this.setBoundaryConditions([]);
+    this.setGravity([]);
     // Overlay buffers are shared with model meshes. Release their binding state
     // only when replacing the model, never on a hover/selection transition.
     for (const overlay of [this.hoverOverlay, this.selectedOverlay]) {
@@ -226,8 +241,31 @@ export class Viewer {
     this.labelsDirty = true;
   }
 
+  setGravity(loads = []) {
+    this.disposeGroup(this.gravityGroup);
+    this.gravityGroup.clear();
+    this.gravityLabels.replaceChildren();
+    this.gravityLabelEntries = [];
+    for (const [index, load] of loads.entries()) {
+      const visual = createGravityVisual(load, this.bounds, index);
+      if (!visual) continue;
+      this.gravityGroup.add(visual);
+      const element = document.createElement('div');
+      element.className = 'boundary-label gravity-label';
+      element.classList.toggle('proposed', load.state === 'proposed');
+      element.dataset.conditionState = load.state;
+      element.dataset.gravityVector = JSON.stringify(load.vector);
+      element.style.setProperty('--condition-color', load.state === 'proposed' ? '#c6a4ff' : '#f2c85b');
+      element.textContent = gravitySummary(load);
+      this.gravityLabels.append(element);
+      this.gravityLabelEntries.push({ element, points: visual.userData.labelPoints, faceKey: load.id, alwaysVisible: true });
+    }
+    this.labelsDirty = true;
+  }
+
   positionBoundaryLabels() {
-    if (!this.boundaryLabelEntries.length) return;
+    const entries = [...this.boundaryLabelEntries, ...this.gravityLabelEntries];
+    if (!entries.length) return;
     const matrix = new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     if (!this.labelsDirty && this.labelCameraMatrix?.equals(matrix)) return;
     this.labelCameraMatrix = matrix;
@@ -237,7 +275,7 @@ export class Viewer {
     const tolerance = (this.bounds?.getSize(new THREE.Vector3()).length() || 1) * 0.0001;
     // Stack labels on the same face instead of covering each other.
     const faceOffsets = new Map();
-    for (const entry of this.boundaryLabelEntries) {
+    for (const entry of entries) {
       // On curved faces the first glyph may be behind the solid. Anchor the
       // label to a visible glyph, retaining occlusion when the entire face is hidden.
       let projected;
@@ -248,7 +286,7 @@ export class Viewer {
         const distance = direction.length();
         this.boundaryRaycaster.set(this.camera.position, direction.normalize());
         const first = this.boundaryRaycaster.intersectObjects(this.meshes, false)[0];
-        if (first && first.distance < distance - tolerance) continue;
+        if (!entry.alwaysVisible && first && first.distance < distance - tolerance) continue;
         projected = candidate;
         break;
       }
@@ -354,9 +392,11 @@ export class Viewer {
     this.renderer.setAnimationLoop(null);
     this.resize.disconnect();
     this.controls.dispose();
+    this.orientationAxes.dispose();
     this.disposeGroup(this.scene);
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.boundaryLabels.remove();
+    this.gravityLabels.remove();
   }
 }

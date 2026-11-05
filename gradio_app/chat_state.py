@@ -33,6 +33,7 @@ class CADSession:
     error: str | None = None
     provider_session: str | None = None
     program_attempts: list = field(default_factory=list)
+    gravity_loads: list = field(default_factory=list)
     pending_confirmation: dict | None = None
     interaction_mode: str = 'guided'
     visual_enabled: bool = False
@@ -110,6 +111,7 @@ class ChatWorkspace:
             s.last_fingerprint = None
             s.provider_session = None
             s.program_attempts = []
+            s.gravity_loads = []
             s.pending_confirmation = None
             s.visual_frame = None
             s.messages = [{'role': 'assistant', 'content': f'Opened **{project["filename"]}** with {len(project["faces"])} faces. '
@@ -174,6 +176,7 @@ class ChatWorkspace:
                     'legacyPreset': {'missingInformation': self.missing(s, project)},
                     'programAttempts': [{k: a.get(k) for k in ('title', 'status', 'programSHA256', 'error', 'recoverable')} for a in s.program_attempts],
                     'simulationRunning': s.running, 'interactionMode': s.interaction_mode,
+                    'gravityLoads': self.gravity(s),
                     'visualAssistance': self.visual.context(s),
                     'confirmationRequired': s.interaction_mode == 'guided',
                     'confirmationScope': 'built-in-chat',
@@ -184,7 +187,16 @@ class ChatWorkspace:
         if not s.result:
             return None
         report = s.result['report']
-        return {key: report.get(key) for key in ('status', 'kind', 'title', 'modelId', 'jobId', 'results', 'mesh', 'messages', 'error', 'limitations', 'tables', 'metrics', 'verifiedSolves', 'geometry', 'stdout', 'traceback', 'errorStage', 'programSHA256')}
+        return {key: report.get(key) for key in ('status', 'kind', 'title', 'modelId', 'jobId', 'results', 'mesh', 'messages', 'error', 'limitations', 'tables', 'metrics', 'verifiedSolves', 'geometry', 'stdout', 'traceback', 'errorStage', 'programSHA256', 'gravityLoads')}
+
+    def gravity(self, s):
+        from mechanical.gravity import preview_gravity
+        from .chat_confirmations import state_fingerprint
+        pending = s.pending_confirmation
+        if (s.interaction_mode == 'guided' and pending and pending['tool'] == 'run_mechanical_code'
+                and pending['fingerprint'] == state_fingerprint(self, s)):
+            return [dict(row, state='proposed') for row in preview_gravity(pending['arguments']['code'])]
+        return s.gravity_loads
 
     def viewer(self, sid):
         from .chat_confirmations import proposed_conditions
@@ -194,7 +206,7 @@ class ChatWorkspace:
                 return ''
             return self.workspace.viewer_state(s.model_id, s.selected, highlighted=s.highlighted,
                        focus_face=s.focus_face, focusToken=s.focus_token, revision=s.revision, sessionId=sid,
-                       proposedBoundaryConditions=proposed_conditions(self, s))
+                       proposedBoundaryConditions=proposed_conditions(self, s), gravityLoads=self.gravity(s))
 
     def _checked(self, sid, model_id, revision):
         s = self.existing(sid)
@@ -276,6 +288,7 @@ class ChatWorkspace:
                     raise ValueError('This exact input was already submitted. Recover its previous job before trying again.')
                 s.last_fingerprint = fingerprint
                 s.running = True
+                s.gravity_loads = []
                 s.result = None
                 s.error = None
             else:
@@ -309,6 +322,7 @@ class ChatWorkspace:
 
     def execute_code(self, sid, args):
         from mechanical.program import validate_program
+        from mechanical.gravity import preview_gravity
         program = {key: args[key] for key in ('title', 'objective', 'code')}
         digest = validate_program(program)
         with self.lock:
@@ -321,11 +335,17 @@ class ChatWorkspace:
             previous = next((a for a in s.program_attempts if a['fingerprint'] == fingerprint), None)
             if previous:
                 if previous.get('report'):
+                    if previous.get('result'):
+                        s.result = previous['result']
+                        s.error = previous['report'].get('error')
+                        s.gravity_loads = [dict(row, state='applied') for row in previous['report'].get('gravityLoads') or []] if previous['status'] == 'succeeded' else []
+                        s.revision += 1
                     return {'alreadyRun': True, 'result': previous['report']}
                 raise ValueError('This exact program was already submitted. Recover its existing job before running it again.')
             attempt = {'title': program['title'], 'programSHA256': digest, 'fingerprint': fingerprint, 'status': 'running'}
             s.program_attempts.append(attempt)
             s.running, s.result, s.error = True, None, None
+            s.gravity_loads = [dict(row, state='running') for row in preview_gravity(program['code'])]
             latest_code = next((m['content'] for m in reversed(s.messages) if isinstance(m['content'], dict) and 'code' in m['content']), None)
             if not latest_code or latest_code['code'] != program['code']:
                 s.messages.append({'role': 'assistant', 'content': {'code': program['code'], 'title': program['title']}})
@@ -337,11 +357,13 @@ class ChatWorkspace:
             with self.lock:
                 s.result = result
                 s.error = result['report'].get('error')
-                attempt.update(status=result['report']['status'], error=s.error, report=self.result_summary(s))
+                s.gravity_loads = [dict(row, state='applied') for row in result['report'].get('gravityLoads', [])] if result['report']['status'] == 'succeeded' else []
+                attempt.update(status=result['report']['status'], error=s.error, report=self.result_summary(s), result=result)
                 return {'result': attempt['report'], 'artifactsReady': True}
         except Exception as exc:
             with self.lock:
                 s.error = str(exc)
+                s.gravity_loads = []
                 attempt.update(status='unknown', error=s.error, recordPath=getattr(exc, 'record_path', None),
                                recoverable=bool(getattr(exc, 'record_path', None)))
             raise
@@ -374,7 +396,8 @@ class ChatWorkspace:
             with self.lock:
                 s.result = result_files(path.parent, report)
                 s.error = report.get('error')
-                attempt.update(status=report['status'], error=s.error, report=self.result_summary(s), recoverable=False)
+                s.gravity_loads = [dict(row, state='applied') for row in report.get('gravityLoads', [])] if report['status'] == 'succeeded' else []
+                attempt.update(status=report['status'], error=s.error, report=self.result_summary(s), result=s.result, recoverable=False)
                 return {'recovered': True, 'result': self.result_summary(s), 'artifactsReady': True}
         finally:
             with self.lock:

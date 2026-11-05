@@ -8,6 +8,29 @@ import * as THREE from 'three';
 import { pickFrame } from '../src/studio/visual.js';
 import { faceFocusPose } from '../src/viewer/faceFocus.js';
 import { Viewer } from '../src/viewer/scene.js';
+import { createGravityVisual, gravitySummary } from '../src/viewer/gravityVisuals.js';
+
+test('gravity arrow follows physical design coordinates and does not rotate with the camera', () => {
+  const bounds = new THREE.Box3(new THREE.Vector3(-10, -10, 0), new THREE.Vector3(10, 10, 30));
+  for (const sign of [-1, 1]) {
+    const load = { vector: [0, 0, sign * 9.80665], state: 'proposed' };
+    const arrow = createGravityVisual(load, bounds);
+    arrow.updateMatrixWorld(true);
+    const direction = new THREE.Vector3(0, 1, 0).transformDirection(arrow.matrixWorld);
+    assert.ok(direction.dot(new THREE.Vector3(0, 0, sign)) > .999999);
+    assert.ok(arrow.position.x > bounds.max.x);
+    assert.match(gravitySummary(load), sign < 0 ? /−Z/ : /\+Z/);
+    const camera = new THREE.PerspectiveCamera(42, 1, .1, 1000);
+    camera.position.set(100, -100, 100); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+    const before = new THREE.Vector3(0, 0, 1).project(camera);
+    camera.position.set(0, 0, 100); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+    assert.notDeepEqual(new THREE.Vector3(0, 0, 1).project(camera).toArray(), before.toArray());
+    assert.ok(new THREE.Vector3(0, 1, 0).transformDirection(arrow.matrixWorld).dot(direction) > .999999);
+  }
+  assert.equal(createGravityVisual({ vector: null }, bounds), null);
+  assert.equal(createGravityVisual({ vector: [0, 0, 0] }, bounds), null);
+  assert.equal(createGravityVisual({ vector: [0, 0, NaN] }, bounds), null);
+});
 
 function meshFace(mesh, first = 0, last = mesh.geometry.index.count / 3 - 1) {
   const box = new THREE.Box3();

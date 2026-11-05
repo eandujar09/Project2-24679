@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { Viewer } from '../viewer/scene.js';
 import { CustomIcon as Icon } from './vendor/zoo/CustomIcon';
 import { captureFrame, pickFrame, setCameraView } from './visual';
+import { gravitySummary } from '../viewer/gravityVisuals.js';
 
 export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload, disabled, theme, children }, ref) {
   const host = useRef(null), viewer = useRef(null), latest = useRef(state), select = useRef(onSelect);
@@ -38,7 +39,7 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
     })().catch(e => { if (e.name !== 'AbortError') setError(e.message); });
     return () => controller.abort();
   }, [state?.modelId, state?.geometryUrl]);
-  const conditionKey = useRef(''), focusToken = useRef(null);
+  const conditionKey = useRef(''), gravityKey = useRef(''), focusToken = useRef(null);
   useEffect(() => {
     const scene = viewer.current;
     if (!scene || loaded !== state?.modelId || !loaded) return;
@@ -46,6 +47,11 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
     if (conditionKey.current !== key) {
       scene.setBoundaryConditions(state.boundaryConditions || [], state.proposedBoundaryConditions || []);
       conditionKey.current = key;
+    }
+    const nextGravity = JSON.stringify([loaded, state.gravityLoads]);
+    if (gravityKey.current !== nextGravity) {
+      scene.setGravity(state.gravityLoads || []);
+      gravityKey.current = nextGravity;
     }
     scene.select(state.selected || null);
     scene.highlight(state.highlighted || []);
@@ -74,7 +80,7 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
     image() {
       const scene = viewer.current;
       if (!scene) return;
-      scene.renderer.render(scene.scene, scene.camera);
+      scene.render();
       const link = document.createElement('a'); link.download = 'cad-view.png'; link.href = scene.renderer.domElement.toDataURL('image/png'); link.click();
     },
   }), []);
@@ -82,6 +88,9 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }}
     onDrop={e => { e.preventDefault(); setDrag(false); if (!disabled && e.dataTransfer.files[0]) onUpload(e.dataTransfer.files[0]); }}>
     <div ref={host} className="studio-canvas" data-testid="cad-viewport" data-model-id={loaded || ''} data-selected-face={state?.selected || ''} data-highlighted-faces={JSON.stringify(state?.highlighted || [])}/>
+    {!!state?.gravityLoads?.length && loaded === state.modelId && <div className="gravity-status" role="status">
+      {state.gravityLoads.map(load => <div key={load.id} data-gravity-state={load.state} className={load.state === 'proposed' ? 'proposed' : ''} title="Physical gravity in the design coordinate system. Applies to all bodies.">{gravitySummary(load)}</div>)}
+    </div>}
     {error ? <div className="viewport-message error"><Icon name="triangleExclamation" width={28}/><p>{error}</p></div>
       : !state?.modelId ? <div className="viewport-message empty-model">
         <div className="model-outline"><Icon name="model" width={60} height={60}/></div>
