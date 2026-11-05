@@ -40,6 +40,12 @@ Continue with the [step-by-step prompts](./examples/simple-bracket/README.md).
 After the support, load and assumptions are reviewed, ask the agent to generate
 a coarse/medium/fine mesh comparison and show its Python before running it.
 
+The composer now also offers **Autonomous simulation** to proceed without
+per-step confirmation, and a separate **Visual assistance** switch. Visual
+assistance lets the model see CAD screenshots, request other angles, and map a
+pixel to an exact face. It can look without clicking. Both are optional; Guided
+simulation with visual assistance off retains the original workflow.
+
 ## Saved state and current limits
 
 The branch contains the React frontend, shared viewer/chat/MCP state, confirmation
@@ -52,8 +58,11 @@ and Windows workspaces are separate. Chat history and pending
 confirmations live in the running process, so reopening after a server restart
 starts a fresh conversation. Use the prompts above to reconstruct the demo.
 
-The simpler bracket has been geometry-checked; no real Ansys solve has yet been
-run for it. Automated UI solver outputs are synthetic. The agent previously hit
+The simpler bracket has been geometry-checked and solved in the real remote Ansys
+worker using the [autonomous demo prompts](./examples/simple-bracket/AUTONOMOUS_DEMO.md).
+A 5 mm quadratic-mesh baseline completed with 2,024 nodes and 318 elements; its
+maximum deformation was 0.0502465 mm and equivalent stress 23.4997 MPa.
+Automated UI test solver outputs are still synthetic. The agent previously hit
 its per-turn step limit while working with the complex bracket; the new geometry
 makes face identification simpler, but the general step-limit behavior has not
 been changed or claimed fixed.

@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import urlparse
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -36,6 +37,19 @@ class Selection(BaseModel):
 
 class OpenModel(BaseModel):
     model_id: str
+
+class Preferences(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: int
+    interaction_mode: Literal['guided', 'autonomous']
+    visual_enabled: bool
+
+class ViewportResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    model_id: str
+    image: str | None = Field(default=None, max_length=6_000_000)
+    face_key: str | None = None
+    error: str | None = Field(default=None, max_length=500)
 
 
 def install_studio(server, service, chat_model=None):
@@ -192,6 +206,24 @@ def install_studio(server, service, chat_model=None):
     def message(sid: str, body: Message):
         start_turn(sid, body.text, body.request_id, body.proposal_token)
         return snapshot(sid)
+
+    @api.post('/sessions/{sid}/preferences')
+    def preferences(sid: str, body: Preferences):
+        existing(sid)
+        try:
+            service.preferences(sid, **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return snapshot(sid)
+
+    @api.post('/sessions/{sid}/visual/{request_id}')
+    def viewport_response(sid: str, request_id: str, body: ViewportResponse):
+        existing(sid)
+        try:
+            service.visual.respond(sid, request_id, body.model_dump(exclude_none=True))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {'accepted': True}
 
     @api.post('/sessions/{sid}/clear')
     def clear(sid: str):

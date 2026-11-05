@@ -11,6 +11,10 @@ from PIL import Image, ImageDraw
 import uvicorn
 
 class ScriptedTestModel:
+    def complete_visual(self, session, prompt, frame):
+        assert frame['image'].startswith('data:image/png;base64,')
+        return self.complete(session, prompt)
+
     def complete(self, session, prompt):
         data = json.loads(prompt.split('CAD_REQUEST_JSON\n', 1)[1])
         c = data['context']
@@ -20,7 +24,13 @@ class ScriptedTestModel:
             return json.dumps({'reply': 'Done. The setup is saved.' if last['ok'] else 'More information is needed: ' + last['error'], 'action': None})
         args = {'model_id': c['modelId'], 'revision': c['revision']}
         name = None
-        if text.startswith('compare mesh sizes'):
+        if text.startswith('inspect screenshot'):
+            frame = c['visualAssistance']['frame']
+            return json.dumps({'reply': 'I received the viewport screenshot: ' + str(frame['width']) + ' pixels wide. No click was needed.', 'action': None})
+        if text.startswith('pick screenshot center'):
+            frame = c['visualAssistance']['frame']
+            name = 'pick_viewport_face'; args.update(frame_id=frame['id'], x=frame['width']/2, y=frame['height']/2)
+        elif text.startswith('compare mesh sizes'):
             name = 'run_mechanical_code'; args.update(title='Generated mesh study', objective='Synthetic browser fixture', code="for size in [6, 4, 3]:\n    print(size)\n")
         elif text.startswith('fix this face'):
             name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'], kind='fixed', values={})

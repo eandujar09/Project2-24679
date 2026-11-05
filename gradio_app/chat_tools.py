@@ -11,6 +11,14 @@ class Highlight(ActionArgs):
     face_keys: list[str] = Field(max_length=100)
     focus: bool = False
 
+class CaptureViewport(ActionArgs):
+    view: Literal['current', 'iso', 'top', 'bottom', 'front', 'back', 'left', 'right'] = 'current'
+
+class PickViewportFace(ActionArgs):
+    frame_id: str
+    x: float = Field(ge=0, allow_inf_nan=False)
+    y: float = Field(ge=0, allow_inf_nan=False)
+
 class Analysis(ActionArgs):
     material: Literal['Structural Steel']
     small_deformation: Literal[True]
@@ -37,7 +45,10 @@ class Comment(ActionArgs):
 ARGUMENT_MODELS = {'highlight_faces': Highlight, 'set_analysis': Analysis,
                    'apply_condition': Condition, 'remove_condition': Remove,
                    'add_comment': Comment, 'run_simulation': ActionArgs, 'run_mechanical_code': MechanicalCode, 'recover_mechanical_run': ActionArgs}
+ARGUMENT_MODELS.update(capture_viewport=CaptureViewport, pick_viewport_face=PickViewportFace)
 DESCRIPTIONS = {
+    'capture_viewport': 'When visual assistance is on, capture the CAD viewport as an image. Optionally change to a standard camera view. You can inspect the screenshot without clicking. The next model response receives the image plus its frame ID and pixel dimensions.',
+    'pick_viewport_face': 'Resolve an (x,y) pixel in a specific screenshot to its exact visible CAD face and highlight it. Coordinates are screenshot pixels from the top-left, NOT screen coordinates. This uses the screenshot camera even if the live camera moved. Does not change user selection or apply a support/load.',
     'recover_mechanical_run': 'Check the existing program job after uncertain transport and retrieve completed results. Never submits or repeats code. If stillRunning, ask the user to check again later.',
     'run_mechanical_code': 'Write and execute your own PyMechanical Python for the current CAD. Fresh imported geometry; author analysis/mesh/material/loads/results/loops yourself. Returns actual logs, traceback, tables, images and verified solve status. See the supplied runtime guide. No fixed material or analysis type is required.',
     'highlight_faces': 'Highlight faces in violet without changing the user selection; empty list clears highlights. focus moves the camera.',
@@ -47,9 +58,10 @@ DESCRIPTIONS = {
     'add_comment': 'Attach the user\'s note to a face.',
     'run_simulation': 'Run the real remote Ansys solver once setup is complete. Returns actual report. Identical submissions are not repeated automatically.'}
 
-def tool_schemas():
+def tool_schemas(visual_enabled=False):
     return [{'name': name, 'description': DESCRIPTIONS[name], 'arguments': model.model_json_schema()}
-            for name, model in ARGUMENT_MODELS.items()]
+            for name, model in ARGUMENT_MODELS.items()
+            if visual_enabled or name not in ('capture_viewport', 'pick_viewport_face')]
 
 def apply_tool(service, sid, name, arguments):
     if name not in ARGUMENT_MODELS:

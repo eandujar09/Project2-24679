@@ -32,6 +32,9 @@ class CADSession:
     provider_session: str | None = None
     program_attempts: list = field(default_factory=list)
     pending_confirmation: dict | None = None
+    interaction_mode: str = 'guided'
+    visual_enabled: bool = False
+    visual_frame: dict | None = None
     turn_lock: object = field(default_factory=Lock)
 
 
@@ -42,6 +45,27 @@ class ChatWorkspace:
         self.sessions = {}
         self.runner = runner or run_remote_project
         self.code_runner = code_runner or run_remote_code
+        from .visual import VisualBridge
+        self.visual = VisualBridge(self)
+
+    def preferences(self, sid, revision, interaction_mode, visual_enabled):
+        with self.lock:
+            s = self.existing(sid)
+            if s.busy or s.running or s.turn_lock.locked():
+                raise ValueError('Wait for the current turn before changing assistant settings.')
+            if s.revision != revision:
+                raise ValueError('The workspace changed. Try changing the setting again.')
+            if interaction_mode not in ('guided', 'autonomous') or not isinstance(visual_enabled, bool):
+                raise ValueError('Choose Guided or Autonomous mode and a visual assistance setting.')
+            if (s.interaction_mode, s.visual_enabled) == (interaction_mode, visual_enabled):
+                return
+            s.interaction_mode, s.visual_enabled = interaction_mode, visual_enabled
+            s.pending_confirmation = None
+            s.awaiting_selection = False
+            s.selection_event = None
+            s.visual_frame = None
+            s.provider_session = None
+            s.revision += 1
 
     def session(self, session_id):
         if not isinstance(session_id, str) or len(session_id) != 32:
@@ -84,8 +108,9 @@ class ChatWorkspace:
             s.provider_session = None
             s.program_attempts = []
             s.pending_confirmation = None
+            s.visual_frame = None
             s.messages = [{'role': 'assistant', 'content': f'Opened **{project["filename"]}** with {len(project["faces"])} faces. '
-                           'What would you like to understand or test? I can highlight possible faces and explain my interpretation before you confirm it. '
+                           'What would you like to understand or test? I can identify faces and explain my interpretation. '
                            'I can generate and run PyMechanical code for this geometry, including mesh-refinement studies.'}]
             s.awaiting_selection = True
             s.selection_event = None
@@ -145,7 +170,9 @@ class ChatWorkspace:
                     'missingInformation': ['Open a STEP model.'] if not project else [],
                     'legacyPreset': {'missingInformation': self.missing(s, project)},
                     'programAttempts': [{k: a.get(k) for k in ('title', 'status', 'programSHA256', 'error', 'recoverable')} for a in s.program_attempts],
-                    'simulationRunning': s.running, 'confirmationRequired': True,
+                    'simulationRunning': s.running, 'interactionMode': s.interaction_mode,
+                    'visualAssistance': self.visual.context(s),
+                    'confirmationRequired': s.interaction_mode == 'guided',
                     'confirmationScope': 'built-in-chat',
                     'pendingConfirmation': ({'tool': s.pending_confirmation['tool'], 'summary': s.pending_confirmation['summary']} if s.pending_confirmation else None),
                     'lastResult': self.result_summary(s), 'lastError': s.error}
@@ -176,6 +203,8 @@ class ChatWorkspace:
 
     def apply(self, sid, tool, arguments):
         args = dict(arguments)
+        if tool in ('capture_viewport', 'pick_viewport_face'):
+            return self.visual.request(sid, tool, args)
         if tool == 'recover_mechanical_run':
             return self.recover_code(sid, args)
         if tool == 'run_mechanical_code':

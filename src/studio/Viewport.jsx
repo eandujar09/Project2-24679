@@ -1,9 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Viewer } from '../viewer/scene.js';
 import { CustomIcon as Icon } from './vendor/zoo/CustomIcon';
+import { captureFrame, pickFrame, setCameraView } from './visual';
 
 export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload, disabled, theme, children }, ref) {
   const host = useRef(null), viewer = useRef(null), latest = useRef(state), select = useRef(onSelect);
+  const visualFrames = useRef(new Map()), ready = useRef(null);
   const [loaded, setLoaded] = useState(null), [error, setError] = useState(''), [drag, setDrag] = useState(false);
   latest.current = state;
   select.current = onSelect;
@@ -23,6 +25,7 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
     if (!state?.modelId || !viewer.current) return;
     const controller = new AbortController();
     setLoaded(null); setError('');
+    ready.current = null; visualFrames.current.clear();
     (async () => {
       const response = await fetch(state.geometryUrl, { signal: controller.signal });
       if (!response.ok) throw new Error('The CAD preview could not be loaded. Try opening the model again.');
@@ -31,6 +34,7 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
       viewer.current.load(geometry.result, { faceIdentities: geometry.faceIdentities });
       viewer.current.meshes.forEach(mesh => { mesh.material.color.set('#aab4bd'); mesh.material.metalness = 0.15; mesh.material.roughness = 0.65; });
       setLoaded(state.modelId);
+      ready.current = state.modelId;
     })().catch(e => { if (e.name !== 'AbortError') setError(e.message); });
     return () => controller.abort();
   }, [state?.modelId, state?.geometryUrl]);
@@ -49,13 +53,20 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
   useImperativeHandle(ref, () => ({
     fit() { viewer.current?.fit(); },
     view(name) {
+      setCameraView(viewer.current, name);
+    },
+    visual(request) {
       const scene = viewer.current;
-      if (!scene?.bounds) return;
-      if (name === 'iso') { scene.camera.up.set(0, 0, 1); scene.fit(true); return; }
-      const direction = { top: [0, 0, 1], front: [0, -1, 0], right: [1, 0, 0] }[name];
-      scene.camera.up.set(...(name === 'top' ? [0, 1, 0] : [0, 0, 1]));
-      scene.camera.position.copy(scene.controls.target).add({ x: direction[0], y: direction[1], z: direction[2] });
-      scene.fit();
+      if (!scene || ready.current !== request.modelId || latest.current?.modelId !== request.modelId) throw new Error('The CAD view is still loading. Try capturing it again.');
+      if (request.tool === 'capture_viewport') {
+        setCameraView(scene, request.view);
+        const frame = captureFrame(scene, request.modelId);
+        visualFrames.current.set(request.id, frame);
+        if (visualFrames.current.size > 4) visualFrames.current.delete(visualFrames.current.keys().next().value);
+        return { image: frame.image };
+      }
+      if (request.tool !== 'pick_viewport_face') throw new Error('Unknown viewport action.');
+      return { face_key: pickFrame(scene, visualFrames.current.get(request.frame_id), request.modelId, request.x, request.y) };
     },
     image() {
       const scene = viewer.current;

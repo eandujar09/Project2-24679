@@ -36,7 +36,24 @@ Example:
 3. Select the loaded face: “Apply a total 100 N in global +X.” Check the face, units and direction, then confirm.
 4. Ask for an analysis. Review its assumptions and proposed Python, then confirm that execution separately.
 
-The built-in chat requires a later user confirmation before applying settings,
+The composer has two independent controls:
+
+- **Assistant mode:** Guided simulation (default) pauses for confirmation.
+  Autonomous simulation identifies faces, applies the requested setup and runs
+  generated code without per-action approval. It can still ask for missing or
+  ambiguous engineering intent. Switching modes cancels any pending proposal;
+  switching alone never runs it. Code and run records remain visible in both modes.
+- **Visual assistance:** off by default. When enabled, the agent receives a CAD
+  viewport screenshot at the start of each turn and can request another angle.
+  Looking does not require clicking. It can also pick a screenshot pixel to get
+  and highlight the exact visible CAD face. This affects only the CAD viewer;
+  it does not control the desktop or change the user's selection.
+
+Both settings belong to this browser session and survive refresh while the app
+runs. A new session after a server restart returns to Guided with visuals off.
+The existing geometry-only workflow is available with visual assistance off.
+
+In Guided mode, the built-in chat requires a later user confirmation before applying settings,
 conditions or notes, removing conditions, or executing any Python or preset solve.
 This includes inspection scripts and corrected code after an error. A model reply,
 tool result or face click cannot approve a proposal. Corrections and questions
@@ -62,8 +79,9 @@ The app mounts an official Python SDK Streamable HTTP MCP server at:
 http://127.0.0.1:7860/mcp/
 ```
 
-It binds only to loopback. Any local MCP client connected to this endpoint can
-read and control this app; exposing it on a network requires authentication.
+It binds to loopback by default. The [Windows deployment](../VM_HOSTING.md) binds
+to its private Tailscale address and requires authentication on all routes.
+Any authenticated MCP client connected to that endpoint can read and control the app.
 It does not connect to other Codex/ChatGPT clients automatically.
 The chat confirmation gate applies to the built-in conversation. Direct MCP tool
 calls are trusted-controller operations and execute after validation; external
@@ -78,6 +96,7 @@ Resources:
 | `cad://runtime` | Generated-Python runtime API and resource limits |
 | `cad://session/{session_id}/context` | Model ID, revision, selected face, highlighted face keys, geometry descriptors, saved conditions/comments, analysis settings, missing inputs, and result status |
 | `cad://session/{session_id}/faces/{offset}` | A page of 100 exact face descriptors, for larger models |
+| `cad://session/{session_id}/viewport` | Latest current PNG screenshot, available when visual assistance is on |
 
 Read the context before each action. Resources are read on demand; this version
 does not advertise subscriptions or push resource-change notifications. The
@@ -100,6 +119,26 @@ accepts `face_keys` and optional `focus`; an empty list clears highlights.
 `apply_condition` accepts `kind`, `face_key`, `values`, and an optional `record_id`
 when editing. Force/displacement values use global `x`, `y`, `z`; pressure uses
 `magnitude`. Units are mm, N, and MPa, with positive pressure inward.
+
+Visual tools on this same server:
+
+- `capture_viewport(session_id, model_id, revision, view="current")` returns an
+  image, frame ID and pixel dimensions. Views: current, iso, top, bottom, front,
+  back, left and right.
+- `pick_viewport_face(session_id, model_id, revision, frame_id, x, y)` casts a ray
+  from that screenshot's frozen camera and maps its visible triangle to the
+  original CAD face key. Coordinates are image pixels from the top-left; device
+  pixel ratio and later camera movement do not change that mapping. A background
+  pixel returns no face. Changed geometry/setup or an expired frame requires a
+  fresh screenshot.
+
+Visual calls require Visual assistance enabled and the corresponding Studio tab
+open to render the image or perform the pick. They time out if the browser does
+not respond. Screenshots contain only the rendered CAD viewport, not the desktop
+or chat. The text-only OpenCode generation route remains unchanged when no image
+is attached. Image calls use OpenCode's image-capable prompt route with the same
+configured model and all native OpenCode tools denied; the CAD host executes the
+returned action objects. Images are sent to that configured model provider.
 
 The server rejects stale revisions, unknown faces, unsupported physics,
 conflicting conditions, accidental duplicate loads, and incomplete simulations.

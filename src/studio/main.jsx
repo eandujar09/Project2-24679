@@ -30,6 +30,7 @@ function App() {
   const [connectionMessage, setConnectionMessage] = useState(''), [checking, setChecking] = useState(false);
   const viewport = useRef(null), fileInput = useRef(null), input = useRef(null), scroll = useRef(null), shell = useRef(null);
   const scrollPinned = useRef(true), applying = useRef(false);
+  const handledVisualRequest = useRef(null);
   const apply = useCallback(data => {
     const before = snapshotRef.current;
     if (before?.context.sessionId === data.context.sessionId && before.context.revision > data.context.revision) return;
@@ -72,6 +73,17 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   const c = snapshot?.context;
+  const visualRequest = c?.visualAssistance?.request;
+  useEffect(() => {
+    if (!visualRequest || handledVisualRequest.current === visualRequest.id) return;
+    handledVisualRequest.current = visualRequest.id;
+    const body = { model_id: visualRequest.modelId };
+    try { Object.assign(body, viewport.current.visual(visualRequest)); }
+    catch (e) { body.error = e.message; }
+    request(`/sessions/${session.current}/visual/${visualRequest.id}`, body).catch(e => {
+      if (e.status !== 409) setError('Could not return the viewport to the assistant: ' + e.message);
+    });
+  }, [visualRequest?.id]);
   const busy = working || !!snapshot?.busy || !snapshot || !connected, hasModel = !!c?.modelId;
   const pending = c?.pendingConfirmation;
   const messages = snapshot?.messages || [];
@@ -115,6 +127,11 @@ function App() {
     try { const r = await request('/connection', {}); setConnectionMessage(r.message); }
     catch (e) { setConnectionMessage(e.message); }
     finally { setChecking(false); }
+  }
+  async function setPreferences(mode, visual) {
+    if (busy) return;
+    try { await act('/preferences', { revision: c.revision, interaction_mode: mode, visual_enabled: visual }); }
+    catch { /* Displayed by act; retain the server's actual settings. */ }
   }
   function downloadSetup() {
     if (!c?.modelId) return;
@@ -186,14 +203,17 @@ function App() {
         <LayoutPanelHeader icon="sparkles" title="Simulation assistant" onClose={() => setChatOpen(false)}><button className="icon-button small" aria-label="New conversation" title="New conversation" disabled={busy} onClick={() => setDialog('clear')}><Icon name="plus" width={16}/></button></LayoutPanelHeader>
         <div className="chat-scroll" ref={scroll} onScroll={e => { const el = e.currentTarget; scrollPinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90; }}>
           <div className={`conversation ${hasConversation ? '' : 'welcome-conversation'}`}>
-            {!hasConversation ? <div className="zoo-welcome px-4 py-3"><div className="assistant-emblem"><Icon name="sparkles" width={34} height={34}/></div><h2 className="text-lg font-semibold my-2">Let’s set up your simulation.</h2><p className="text-2 text-sm">{hasModel ? `${c.filename} is ready. Tell me what you want to learn about it.` : 'Bring your CAD model. We’ll work through the setup together, one decision at a time.'}</p><WelcomeItem graphic={<div className="welcome-graphic"><Icon name="model" width={32}/></div>} heading="Start with your model"><p>Import a STEP file and select the faces you want to discuss.</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic violet"><Icon name="plane" width={32}/></div>} heading="See exactly what I mean"><p>I’ll highlight proposed faces, explain assumptions, and ask you to confirm.</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic mint"><Icon name="beaker" width={32}/></div>} heading="From setup to results"><p>Run an Ansys analysis, compare meshes, and explore the result plots here.</p></WelcomeItem><div className="starter-prompts">{['Help me set up an analysis', 'Where should I apply a load?', 'Compare mesh sizes'].map(text => <button disabled={!hasModel || busy} key={text} onClick={() => send(text)}>{text}<Icon name="arrowShortRight" width={16}/></button>)}</div></div>
+            {!hasConversation ? <div className="zoo-welcome px-4 py-3"><div className="assistant-emblem"><Icon name="sparkles" width={34} height={34}/></div><h2 className="text-lg font-semibold my-2">Let’s set up your simulation.</h2><p className="text-2 text-sm">{hasModel ? `${c.filename} is ready. Tell me what you want to learn about it.` : 'Bring your CAD model. We’ll work through the setup together, one decision at a time.'}</p><WelcomeItem graphic={<div className="welcome-graphic"><Icon name="model" width={32}/></div>} heading="Start with your model"><p>Import a STEP file and select the faces you want to discuss.</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic violet"><Icon name="plane" width={32}/></div>} heading="See exactly what I mean"><p>{c?.interactionMode === 'autonomous' ? 'I’ll identify faces and work through the setup, asking when essential details are missing.' : 'I’ll highlight proposed faces, explain assumptions, and ask you to confirm.'}</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic mint"><Icon name="beaker" width={32}/></div>} heading="From setup to results"><p>Run an Ansys analysis, compare meshes, and explore the result plots here.</p></WelcomeItem><div className="starter-prompts">{['Help me set up an analysis', 'Where should I apply a load?', 'Compare mesh sizes'].map(text => <button disabled={!hasModel || busy} key={text} onClick={() => send(text)}>{text}<Icon name="arrowShortRight" width={16}/></button>)}</div></div>
               : messages.map((m, i) => <MessageCard key={`${c.modelId}-${i}`} message={m} onCopyError={setError}/>)}
             {busy && <div className="assistant-thinking" role="status"><span className="spinner"/>{snapshot?.status || 'Working…'}</div>}
             {pending && !busy && <div className="confirmation-card" data-testid="confirmation-card"><div className="confirmation-title"><Icon name="clipboardCheckmark" width={18}/>Review before continuing</div><MarkdownText>{pending.summary}</MarkdownText><div className="confirmation-actions"><button className="confirm-button" onClick={() => send('Confirm', snapshot.proposalToken)}><Icon name="checkmark" width={17}/>Confirm</button><button onClick={() => { setMessage('I want to change '); input.current?.focus(); }}>Change something</button></div></div>}
             {!!snapshot?.downloads.length && <div className="chat-downloads">{snapshot.downloads.map(d => <a key={d.url} href={d.url} download={d.filename}><Icon name="download" width={16}/>{d.label}</a>)}</div>}
           </div>
         </div>
-        <div className="chat-composer"><Composer value={message} onChange={setMessage} onSend={() => send()} busy={busy || !connected || !snapshot} selected={selected} onImport={importModel} inputRef={input}/></div>
+        <div className="chat-composer"><Composer value={message} onChange={setMessage} onSend={() => send()} busy={busy || !connected || !snapshot} selected={selected} onImport={importModel} inputRef={input}
+          mode={c?.interactionMode || 'guided'} visualEnabled={!!c?.visualAssistance?.enabled}
+          onModeChange={mode => setPreferences(mode, !!c?.visualAssistance?.enabled)}
+          onVisualChange={visual => setPreferences(c?.interactionMode || 'guided', visual)}/></div>
       </section></>}
       <nav className="right-rail" aria-label="Assistant panels"><IconButton name="sparkles" label="Toggle assistant" active={chatOpen} onClick={() => setChatOpen(!chatOpen)}/></nav>
     </div>

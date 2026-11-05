@@ -23,7 +23,10 @@ orbit the part to view the outside mounting surface. The rounded bend makes the
 inside corner smooth, but constraint/load edges can still produce local stress
 peaks. This is a demonstration setup, not a validated physical mounting design.
 
-## Suggested conversation
+For the tested screenshot, autonomous setup, solve and mesh-study sequence, use
+[Autonomous demo prompts](./AUTONOMOUS_DEMO.md).
+
+## Suggested conversation (Guided mode)
 
 Send one prompt at a time and review each confirmation before proceeding.
 

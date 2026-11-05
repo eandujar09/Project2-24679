@@ -39,7 +39,7 @@ export function WelcomeItem({ graphic, heading, children }) {
 }
 
 // Same textarea, spacing, border and action arrangement as ZookeeperConversation.
-export function Composer({ value, onChange, onSend, busy, children, selected, onImport, inputRef }) {
+export function Composer({ value, onChange, onSend, busy, children, selected, onImport, inputRef, mode = 'guided', visualEnabled = false, onModeChange, onVisualChange }) {
   return <div className="flex flex-col p-4 gap-2 composer">
     <div className="p-2 border b-4 focus-within:b-default flex flex-col gap-2 relative composer-box">
       {selected && <div className="selection-chip"><CustomIcon name="plane" width={15} height={15}/>Face {selected.index}<span>Selected in viewport</span></div>}
@@ -48,13 +48,14 @@ export function Composer({ value, onChange, onSend, busy, children, selected, on
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); } }}
         className="bg-transparent outline-none w-full text-sm overflow-auto" style={{ height: '3lh' }} maxLength={8000}/>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-1">
-        <div className="flex items-center gap-1 min-w-0">
-          <button className="composer-mode" title="The assistant explains proposals and waits for your confirmation." type="button" onClick={() => inputRef.current?.focus()}><CustomIcon name="brain" width={18} height={18}/>Guided simulation</button>
+        <div className="flex items-center gap-1 min-w-0 composer-options">
+          <label className="composer-mode"><CustomIcon name="brain" width={18} height={18}/><select aria-label="Assistant mode" value={mode} disabled={busy} onChange={e => onModeChange?.(e.target.value)}><option value="guided">Guided simulation</option><option value="autonomous">Autonomous simulation</option></select></label>
+          <button className={`composer-mode visual-toggle ${visualEnabled ? 'enabled' : ''}`} role="switch" aria-label="Visual assistance" aria-checked={visualEnabled} disabled={busy} onClick={() => onVisualChange?.(!visualEnabled)} title="Let the assistant see CAD screenshots and identify faces by image pixels."><CustomIcon name="camera" width={16}/><span>Visual {visualEnabled ? 'on' : 'off'}</span></button>
           <button type="button" className="icon-button small" title="Import STEP model" aria-label="Attach CAD file" disabled={busy} onClick={onImport}><CustomIcon name="paperclip" width={18} height={18}/></button>
         </div>
         <button type="button" aria-label="Send message" title="Send (Enter)" disabled={busy || !value.trim()} onClick={onSend} className="send-button m-0 p-1 rounded-sm border-none bg-ml-green hover:bg-ml-green text-chalkboard-100"><CustomIcon name="arrowShortUp" width={20} height={20}/></button>
       </div>
     </div>
-    <div className="text-3 text-xs composer-caption">{children || 'Review highlighted faces and assumptions before confirming.'}</div>
+    <div className="text-3 text-xs composer-caption">{children || (mode === 'autonomous' ? 'Chooses faces and runs without confirmation. Asks when essential details are missing.' : 'Review highlighted faces and assumptions before confirming.')}{visualEnabled && ' Can see the CAD viewport and map image points to faces.'}</div>
   </div>;
 }

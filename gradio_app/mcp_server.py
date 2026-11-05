@@ -1,5 +1,6 @@
 """Real MCP resources and tools backed by the same state used by the CAD/chat UI."""
 import json
+import base64
 from functools import partial
 from typing import Literal
 import anyio
@@ -108,6 +109,35 @@ def build_mcp(service, hosted_host=None):
     def runtime_guide() -> str:
         from mechanical.program import PROGRAM_GUIDE
         return PROGRAM_GUIDE
+
+    @mcp.resource('cad://session/{session_id}/viewport', mime_type='image/png')
+    def viewport_image(session_id: str) -> bytes:
+        """Latest current viewport screenshot, available only with Visual assistance enabled."""
+        with service.lock:
+            frame = service.visual.frame(service.existing(session_id))
+            if not frame:
+                raise ValueError('No current screenshot. Enable Visual assistance and capture the viewport.')
+            return base64.b64decode(frame['image'].split(',', 1)[1])
+
+    @mcp.tool()
+    async def capture_viewport(session_id: str, model_id: str, revision: int,
+                               view: Literal['current', 'iso', 'top', 'bottom', 'front', 'back', 'left', 'right'] = 'current'):
+        """See the CAD viewport without clicking. Requires Visual assistance and an open Studio tab. Returns PNG plus frame ID and pixel dimensions."""
+        from mcp.types import TextContent, ImageContent
+        result = await apply(session_id, 'capture_viewport', dict(model_id=model_id, revision=revision, view=view))
+        with service.lock:
+            frame = service.visual.frame(service.existing(session_id))
+            if not frame or frame['id'] != result['frameId']:
+                raise ValueError('The viewport changed. Capture it again.')
+            return [TextContent(type='text', text=json.dumps(result)),
+                    ImageContent(type='image', mimeType='image/png', data=frame['image'].split(',', 1)[1])]
+
+    @mcp.tool()
+    async def pick_viewport_face(session_id: str, model_id: str, revision: int,
+                                 frame_id: str, x: float, y: float) -> dict:
+        """Map a pixel in the captured image to an exact CAD face and highlight it. Uses the captured camera. Does not change the user's selection or apply a condition."""
+        return await apply(session_id, 'pick_viewport_face', dict(model_id=model_id, revision=revision,
+                           frame_id=frame_id, x=x, y=y))
 
     @mcp.tool()
     async def run_simulation(session_id: str, model_id: str, revision: int) -> dict:

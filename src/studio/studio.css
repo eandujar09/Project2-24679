@@ -155,6 +155,10 @@ kbd {font:10px Inter,sans-serif;background:var(--border);padding:2px 4px;border-
 .composer textarea {min-height:55px;max-height:160px;font-size:13px;line-height:1.6}
 .composer textarea::placeholder {color:var(--subtle)}
 .composer-mode {background:var(--surface);padding:4px 7px;border-color:var(--border-strong);height:27px;font-size:11px;white-space:nowrap;gap:5px}
+.composer-options {flex-wrap:wrap}
+label.composer-mode {display:inline-flex;align-items:center;border:1px solid var(--border-strong);border-radius:3px}
+.composer-mode select {background:var(--surface);color:var(--fg);border:0;font:inherit;max-width:180px;outline-offset:3px}
+.visual-toggle.enabled {color:var(--mint);border-color:var(--mint)}
 .composer-caption {font-size:10px;color:var(--muted);letter-spacing:-.1px;line-height:1.5}
 .send-button {height:28px;width:28px;display:grid;place-items:center;background:var(--mint)!important;color:#143d2b!important;border:0}
 .send-button:disabled {opacity:.3}

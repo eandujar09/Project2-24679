@@ -5,6 +5,26 @@ import { validateAnnotations, validateProjectAnnotations } from '../src/comments
 import { validateConditions } from '../src/boundaries/conditions.js';
 import { createBoundaryVisual, faceSamples } from '../src/viewer/boundaryVisuals.js';
 import * as THREE from 'three';
+import { pickFrame } from '../src/studio/visual.js';
+
+test('image pixels pick exact faces using the frozen camera after the live view moves', () => {
+  const scene = new THREE.Scene();
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  mesh.userData.triangleToFaceKey = ['right', 'right', 'left', 'left', 'top', 'top', 'bottom', 'bottom', 'front', 'front', 'back', 'back'];
+  scene.add(mesh); scene.updateMatrixWorld(true);
+  const camera = new THREE.PerspectiveCamera(60, 2, .1, 100);
+  camera.position.set(0, 0, 5); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+  const frame = { modelId: 'cad', camera: camera.clone(), width: 600, height: 300 };
+  camera.position.set(5, 0, 0); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+  const viewer = { scene, meshes: [mesh], camera };
+  assert.equal(pickFrame(viewer, frame, 'cad', 300, 150), 'front');
+  const p = new THREE.Vector3(.4, .3, 1).project(frame.camera);
+  assert.equal(pickFrame(viewer, frame, 'cad', (p.x + 1) * 300, (1 - p.y) * 150), 'front');
+  assert.equal(pickFrame(viewer, frame, 'cad', 0, 0), null);
+  assert.throws(() => pickFrame(viewer, frame, 'other-cad', 300, 150), /expired/);
+  assert.throws(() => pickFrame(viewer, frame, 'cad', 600, 150), /outside/);
+  mesh.geometry.dispose(); mesh.material.dispose();
+});
 
 test('face ranges include both endpoints and group many triangles into one face', () => {
   const mesh = { index: { array: new Array(300).fill(0) }, brep_faces: [{ first: 0, last: 79 }, { first: 80, last: 99 }] };

@@ -84,5 +84,7 @@ must also be installed there before deploying.
 - Startup shortcut launch and persistence after the invoking remote shell exits.
 - 68 Python tests and both Studio browser tests, including HTTP-compatible chat IDs.
 
-No real Ansys solve has been run for the new bracket yet. Connection checks do
-not establish solver-license availability or validate generated simulation code.
+The [autonomous bracket demo](examples/simple-bracket/AUTONOMOUS_DEMO.md) was
+also tested against the real remote worker: its 5 mm quadratic-mesh baseline
+completed a verified solve and exported deformation/stress plots. This validates
+that tested case; arbitrary generated analyses can still fail or need clarification.

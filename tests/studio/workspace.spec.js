@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-let fixture;
+let fixture, visualFixture;
 test.beforeAll(() => {
   const directory = path.resolve('test-results/studio-fixtures');
   mkdirSync(directory, { recursive: true });
@@ -17,6 +17,15 @@ writer = STEPControl_Writer()
 writer.Transfer(BRepPrimAPI_MakeCylinder(5, 20).Shape(), STEPControl_AsIs)
 writer.Write(sys.argv[1])
 `, fixture]);
+  visualFixture = path.join(directory, 'visual-box.step');
+  execFileSync(python, ['-c', `
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+from OCP.STEPControl import STEPControl_Writer, STEPControl_AsIs
+import sys
+writer = STEPControl_Writer()
+writer.Transfer(BRepPrimAPI_MakeBox(20, 15, 10).Shape(), STEPControl_AsIs)
+writer.Write(sys.argv[1])
+`, visualFixture]);
 });
 
 async function state(page) {
@@ -141,5 +150,48 @@ test('Included simple bracket, camera tools, layout, theme and mobile', async ({
   await expect(page.getByRole('textbox', { name: 'Message the assistant' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/studio-mobile.png' });
+  expect(errors).toEqual([]);
+});
+
+test('Optional visual screenshots and pixel picks work with either assistant mode', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('.studio-app')).toHaveAttribute('data-session-id', /[a-f0-9]{32}/);
+  await page.getByLabel('Upload STEP file').setInputFiles(visualFixture);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await expect(page.getByLabel('Assistant mode')).toHaveValue('guided');
+  await expect(page.getByRole('switch', { name: 'Visual assistance' })).not.toBeChecked();
+  await page.getByRole('switch', { name: 'Visual assistance' }).click();
+  await expect(page.getByRole('switch', { name: 'Visual assistance' })).toBeChecked();
+  await send(page, 'Inspect screenshot without clicking');
+  await expect(page.locator('.conversation')).toContainText('I received the viewport screenshot');
+  expect((await state(page)).context.highlightedFaceKeys).toEqual([]);
+  await send(page, 'Pick screenshot center');
+  await expect(page.locator('.highlight-info')).toContainText('Face');
+  expect((await state(page)).context.selectedFace).toBeNull();
+  await selectFace(page, 1);
+  await send(page, 'Fix this face');
+  await expect(page.getByTestId('confirmation-card')).toBeVisible();
+  await confirm(page);
+  expect((await state(page)).context.boundaryConditions).toHaveLength(1);
+  await send(page, 'Use Structural Steel and small deformations');
+  await expect(page.getByTestId('confirmation-card')).toBeVisible();
+  await page.getByLabel('Assistant mode').selectOption('autonomous');
+  await expect(page.getByTestId('confirmation-card')).toHaveCount(0);
+  expect((await state(page)).context.analysis.material).toBeNull();
+  await send(page, 'Use Structural Steel and small deformations');
+  expect((await state(page)).context.analysis.material).toBe('Structural Steel');
+  await expect(page.getByTestId('confirmation-card')).toHaveCount(0);
+  await page.getByRole('switch', { name: 'Visual assistance' }).click();
+  await expect(page.getByRole('switch', { name: 'Visual assistance' })).not.toBeChecked();
+  expect((await state(page)).context.visualAssistance.frame).toBeNull();
+  await send(page, 'Compare mesh sizes and check convergence');
+  await expect(page.locator('.message-image img')).toHaveCount(2);
+  await page.getByLabel('Assistant mode').selectOption('guided');
+  await expect(page.getByLabel('Assistant mode')).toHaveValue('guided');
+  await send(page, 'Use Structural Steel and small deformations');
+  await expect(page.getByTestId('confirmation-card')).toBeVisible();
+  await page.screenshot({ path: 'test-results/studio-visual-mode.png' });
   expect(errors).toEqual([]);
 });

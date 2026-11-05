@@ -1,0 +1,46 @@
+{
+  "date": "2026-11-05",
+  "cadSHA256": "2579437421c8a4055a3cb749181c2f36233935cf5bd4b7a9aad5ce9dcb8c48ea",
+  "mechanicalVersion": "261",
+  "setupRepeatedWithoutDuplicates": true,
+  "baseline": {
+    "nodes": 2024,
+    "elements": 318,
+    "maxDeformationMm": 0.05024651696696849,
+    "maxEquivalentStressMPa": 23.499661803616217
+  },
+  "meshComparison": [
+    {
+      "deformation_change_percent": null,
+      "element_size_setting_mm": 8,
+      "elements": 80,
+      "max_equivalent_stress_MPa": 20.051020922544957,
+      "max_total_deformation_mm": 0.050216512643033305,
+      "nodes": 655,
+      "stress_change_percent": null
+    },
+    {
+      "deformation_change_percent": 0.059749915627299074,
+      "element_size_setting_mm": 5,
+      "elements": 318,
+      "max_equivalent_stress_MPa": 23.499661803616217,
+      "max_total_deformation_mm": 0.05024651696696849,
+      "nodes": 2024,
+      "stress_change_percent": 17.19932812594933
+    },
+    {
+      "deformation_change_percent": 0.1518676953927556,
+      "element_size_setting_mm": 3,
+      "elements": 1330,
+      "max_equivalent_stress_MPa": 23.493565855515218,
+      "max_total_deformation_mm": 0.050322825194301354,
+      "nodes": 7276,
+      "stress_change_percent": 0.025940578004661815
+    }
+  ],
+  "verifiedSolveStatuses": [
+    "Done",
+    "Done",
+    "Done"
+  ]
+}

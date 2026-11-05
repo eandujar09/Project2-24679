@@ -74,6 +74,22 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(self.client.get(self.base + '/geometry', params={'model_id': 'old-model'}).status_code, 409)
         self.assertEqual(self.client.post(self.base + '/upload', files={'file': ('code.py', b'print(1)')}).status_code, 422)
 
+    def test_preferences_are_explicit_idle_only_and_isolated_per_window(self):
+        c = self.read()['context']
+        settings = {'revision': c['revision'], 'interaction_mode': 'autonomous', 'visual_enabled': True}
+        self.service.session(self.sid).busy = True
+        self.assertEqual(self.client.post(self.base + '/preferences', json=settings).status_code, 409)
+        self.service.session(self.sid).busy = False
+        self.assertEqual(self.client.post(self.base + '/preferences', json=dict(settings, interaction_mode='invalid')).status_code, 422)
+        result = self.client.post(self.base + '/preferences', json=settings)
+        self.assertEqual(result.status_code, 200)
+        self.assertFalse(result.json()['context']['confirmationRequired'])
+        self.assertTrue(result.json()['context']['visualAssistance']['enabled'])
+        self.assertEqual(self.client.post(self.base + '/preferences', json=settings).status_code, 409)
+        other = self.client.post('/api/studio/sessions').json()['context']
+        self.assertTrue(other['confirmationRequired'])
+        self.assertFalse(other['visualAssistance']['enabled'])
+
     def test_artifacts_are_scoped_and_clear_preserves_execution_records(self):
         exports = self.workspace.root / 'exports'
         exports.mkdir(exist_ok=True)
