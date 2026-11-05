@@ -47,6 +47,8 @@ async function confirm(page) {
 }
 
 test('Shared face state, chat confirmations, generated code and result downloads', async ({ page }) => {
+  // HTTP Tailscale addresses do not expose the secure-context randomUUID API.
+  await page.addInitScript(() => Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined }));
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');

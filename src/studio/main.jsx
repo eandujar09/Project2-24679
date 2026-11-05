@@ -6,6 +6,7 @@ import { CustomIcon as Icon } from './vendor/zoo/CustomIcon';
 import { ActionButton, ChatBubble, Composer, LayoutPanelHeader, WelcomeItem } from './vendor/zoo/Presentation';
 import { Viewport } from './Viewport';
 import { request } from './api';
+import { copyText, requestId } from './browser';
 import './studio.css';
 
 function MarkdownText({ children }) {
@@ -100,7 +101,7 @@ function App() {
     if (!text.trim() || busy) return;
     scrollPinned.current = true; setChatOpen(true);
     try {
-      const body = { text: text.trim(), request_id: crypto.randomUUID() };
+      const body = { text: text.trim(), request_id: requestId() };
       if (token) body.proposal_token = token;
       if (await act('/messages', body)) setMessage('');
     } catch { /* Preserve the draft for correction/retry. */ }
@@ -161,7 +162,7 @@ function App() {
         </>}
         {panel === 'files' && <><div className="panel-section-label">Saved models <span>{snapshot?.projects.length || 0}</span></div>{snapshot?.projects.map(p => <button key={p.modelId} disabled={busy} className={`saved-model ${p.modelId === c.modelId ? 'current' : ''}`} onClick={() => act('/open', { model_id: p.modelId }).catch(() => {})}><Icon name="file" width={20}/><span>{p.label.split(' · ')[0]}<small>STEP geometry</small></span>{p.modelId === c.modelId && <Icon name="checkmark" width={16}/>}</button>)}<button className="panel-import" disabled={busy} onClick={importModel}><Icon name="plus" width={16}/>Import another model</button></>}
         {panel === 'setup' && <><div className="panel-section-label">Saved conditions <span>{c?.boundaryConditions.length || 0}</span></div>{c?.boundaryConditions.length ? c.boundaryConditions.map(b => <button className="condition-row" key={b.id} onClick={() => chooseFace(b.faceKey, true)}><Icon name={b.type === 'fixed' ? 'fix' : 'arrowDown'} width={18}/><span><strong>{b.type === 'fixed' ? 'Fixed support' : b.type[0].toUpperCase() + b.type.slice(1)}</strong><small>Face {c.faces.find(f => f.key === b.faceKey)?.index || b.faceKey.split(':').pop()} · {b.type === 'fixed' ? 'All translations fixed' : Object.entries(b.values).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(', ') + (b.type === 'force' ? ' N' : b.type === 'pressure' ? ' MPa' : ' mm')}</small></span></button>) : <EmptyPanel icon="clipboardCheckmark" text="Select a face, then describe its support or load in the conversation."/>}{c?.analysis.material && <div className="setup-details"><span>Material<strong>{c.analysis.material}</strong></span><span>Mesh setting<strong>{c.analysis.elementSizeMm} mm</strong></span></div>}<button className="panel-import" disabled={!hasModel || busy} onClick={() => send('Help me review my simulation setup. Highlight any faces we need to check and ask about missing assumptions.')}><Icon name="sparkles" width={16}/>Review setup together</button></>}
-        {panel === 'code' && (latestCode ? <><div className="panel-section-label">{latestCode.title}</div><pre className="code-view"><code>{latestCode.code}</code></pre><button className="panel-import" onClick={() => navigator.clipboard.writeText(latestCode.code).catch(() => setError('Could not copy the code.'))}><Icon name="clipboard" width={16}/>Copy Python</button></> : <EmptyPanel icon="code" text="The assistant’s generated Python will appear here for review before it runs."/>)}
+        {panel === 'code' && (latestCode ? <><div className="panel-section-label">{latestCode.title}</div><pre className="code-view"><code>{latestCode.code}</code></pre><button className="panel-import" onClick={() => copyText(latestCode.code).catch(() => setError('Could not copy the code.'))}><Icon name="clipboard" width={16}/>Copy Python</button></> : <EmptyPanel icon="code" text="The assistant’s generated Python will appear here for review before it runs."/>)}
         {panel === 'results' && <>{images.length ? <>{images.map((im, i) => <a href={im.image} target="_blank" rel="noreferrer" className="result-thumbnail" key={i}><img src={im.image} alt={im.label}/><span>{im.label}</span></a>)}{snapshot.downloads.map(d => <a key={d.url} className="download-link" href={d.url} download={d.filename}><Icon name="download" width={16}/>{d.label}</a>)}</> : <EmptyPanel icon="beaker" text="Result plots and files will appear here after an Ansys run."/>}{c?.lastResult && <div className="result-status"><span className={`status-dot ${c.lastResult.status === 'succeeded' ? '' : 'warn'}`}/>{c.lastResult.status === 'succeeded' ? 'Latest run completed' : c.lastResult.status}</div>}</>}
         {panel === 'activity' && <><div className="panel-section-label">Execution history</div>{c?.programAttempts.length ? c.programAttempts.map((a, i) => <div className="attempt" key={i}><span className={`status-dot ${a.status === 'succeeded' ? '' : 'warn'}`}/><div><strong>{a.title}</strong><small>{a.status}</small>{a.error && <p>{a.error}</p>}</div></div>) : <EmptyPanel icon="logs" text="Your simulation runs and their status will appear here."/>}{c?.lastResult?.stdout && <pre className="code-view">{c.lastResult.stdout}</pre>}</>}
       </div></aside>}
@@ -217,7 +218,7 @@ function MessageCard({ message: m, onCopyError }) {
   if (typeof content === 'object' && content.image) return <figure className="message-image"><a href={content.image} target="_blank" rel="noreferrer"><img src={content.image} alt={content.label} loading="lazy"/></a><figcaption>{content.label}</figcaption></figure>;
   if (typeof content !== 'string') return <p className="muted">{content.unavailable || 'This message is unavailable.'}</p>;
   const user = m.role === 'user';
-  return <div className={`exchange ${user ? 'user-exchange' : 'assistant-exchange'}`}><ChatBubble side={user ? 'right' : 'left'} className="py-2" avatar={<span className={user ? 'message-avatar human' : 'message-avatar assistant'}><Icon name={user ? 'person' : 'sparkles'} width={18}/></span>}><MarkdownText>{content}</MarkdownText></ChatBubble>{!user && <div className="response-toolbar"><button aria-label="Copy response" title="Copy response" onClick={() => navigator.clipboard.writeText(content).catch(() => onCopyError('Could not copy the response.'))}><Icon name="clipboard" width={15}/></button></div>}</div>;
+  return <div className={`exchange ${user ? 'user-exchange' : 'assistant-exchange'}`}><ChatBubble side={user ? 'right' : 'left'} className="py-2" avatar={<span className={user ? 'message-avatar human' : 'message-avatar assistant'}><Icon name={user ? 'person' : 'sparkles'} width={18}/></span>}><MarkdownText>{content}</MarkdownText></ChatBubble>{!user && <div className="response-toolbar"><button aria-label="Copy response" title="Copy response" onClick={() => copyText(content).catch(() => onCopyError('Could not copy the response.'))}><Icon name="clipboard" width={15}/></button></div>}</div>;
 }
 
 import licenseText from './vendor/zoo/LICENSE?raw';

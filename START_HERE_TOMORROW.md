@@ -4,6 +4,13 @@ Branch: `feat/simulation-studio-demo`
 
 ## Open the app
 
+Connect Tailscale and open the **[hosted demo](http://100.88.230.43:7860/)**.
+Sign in with the existing OpenCode credentials. The app runs on the Windows
+machine, so the Mac's local server can be closed. Windows must stay awake with
+Tailscale and OpenCode running; Studio starts when its Windows user signs in.
+See [VM_HOSTING.md](./VM_HOSTING.md) for hosting and restart details.
+
+For local development instead:
 On the configured Mac, open **Start Mac App.command** if the local server has
 stopped, then visit <http://127.0.0.1:7860/>. Keep Tailscale connected when you
 want to use the OpenCode chatbot or remote Ansys worker.
@@ -15,8 +22,8 @@ Git. Frontend build outputs are also excluded; the setup script builds them.
 ## Use the new demo
 
 Import [`examples/simple-bracket/simple-bracket.step`](./examples/simple-bracket/simple-bracket.step),
-or choose **simple-bracket.step** from the left folder panel if it is already
-saved on this Mac. The new original model has nine faces and no holes.
+or choose **simple-bracket.step** from the left folder panel. It is already saved
+on the hosted demo. The new original model has nine faces and no holes.
 
 - **Support:** the broad outside back of the upright at **X = 0 mm**.
 - **Load:** the small flat tip of the horizontal arm at **X = 80 mm**.
@@ -40,7 +47,8 @@ workflow, generated-Python execution path, remote worker integration, tests, and
 the new STEP demo plus generator. The original complex bracket's saved support
 annotations are still in this Mac's local workspace.
 
-CAD files and saved conditions persist locally. Chat history and pending
+CAD files and saved conditions persist on the machine hosting the app; the Mac
+and Windows workspaces are separate. Chat history and pending
 confirmations live in the running process, so reopening after a server restart
 starts a fresh conversation. Use the prompts above to reconstruct the demo.
 

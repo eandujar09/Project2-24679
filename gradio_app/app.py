@@ -183,11 +183,11 @@ def build_app(workspace, service=None, chat_model=None):
     return app
 
 
-def build_server(workspace, chat_model=None, service=None, studio=True):
+def build_server(workspace, chat_model=None, service=None, studio=True, auth=None, hosted_host=None):
     from fastapi import FastAPI
     from .mcp_server import build_mcp
     service = service or ChatWorkspace(workspace)
-    mcp = build_mcp(service)
+    mcp = build_mcp(service, hosted_host=hosted_host)
     mcp_app = mcp.streamable_http_app()
 
     @asynccontextmanager
@@ -205,6 +205,9 @@ def build_server(workspace, chat_model=None, service=None, studio=True):
     server = gr.mount_gradio_app(server, demo, path='/', css=CSS,
              allowed_paths=[str(STATIC), str(workspace.root / 'previews'), str(workspace.root / 'exports')])
     server.state.cad_service = service
+    if auth:
+        from .hosting import PrivateDemoAuth
+        server.add_middleware(PrivateDemoAuth, **auth)
     return server
 
 
@@ -212,9 +215,14 @@ def main():
     import uvicorn
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=7860)
+    parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--auth-config', help='Private JSON containing username/password; required outside loopback.')
     parser.add_argument('--data-dir', default=os.environ.get('STEP_GRADIO_DATA', 'gradio-data'))
     args = parser.parse_args()
-    uvicorn.run(build_server(Workspace(args.data_dir)), host='127.0.0.1', port=args.port)
+    from .hosting import hosting_settings
+    auth = hosting_settings(args.host, args.auth_config)
+    uvicorn.run(build_server(Workspace(args.data_dir), auth=auth, hosted_host=args.host if auth else None),
+                host=args.host, port=args.port)
 
 if __name__ == '__main__':
     main()

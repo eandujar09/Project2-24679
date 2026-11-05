@@ -7,9 +7,17 @@ from mcp.server.fastmcp import FastMCP
 from .chat_tools import apply_tool
 
 
-def build_mcp(service):
+def build_mcp(service, hosted_host=None):
+    from mcp.server.transport_security import TransportSecuritySettings
+    transport_security = None
+    if hosted_host:
+        hosts = ['127.0.0.1:*', 'localhost:*', f'{hosted_host}:*']
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True, allowed_hosts=hosts,
+            allowed_origins=[f'http://{host}' for host in hosts])
     mcp = FastMCP('CAD Simulation Studio', host='127.0.0.1', streamable_http_path='/',
                   stateless_http=True, json_response=True,
+                  transport_security=transport_security,
                   instructions='Read cad://sessions, then the relevant session context. Mutations require its modelId and revision. Selection and assistant highlights are independent.')
 
     @mcp.resource('cad://sessions', mime_type='application/json')
