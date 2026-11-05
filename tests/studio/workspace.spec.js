@@ -139,6 +139,25 @@ test('Shared face state, chat confirmations, generated code and result downloads
   expect(errors).toEqual([]);
 });
 
+test('A proposal pivots to the hidden back face without selecting or applying it', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.studio-app')).toHaveAttribute('data-session-id', /[a-f0-9]{32}/);
+  await page.getByLabel('Upload STEP file').setInputFiles(path.resolve('examples/simple-bracket/simple-bracket.step'));
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await send(page, 'Fix the back face');
+  await expect(page.locator('.boundary-label.proposed')).toBeVisible();
+  await expect(page.getByTestId('confirmation-card')).toBeVisible();
+  expect((await state(page)).context.selectedFace).toBeNull();
+  expect((await state(page)).context.boundaryConditions).toHaveLength(0);
+  // Once the short pivot finishes, the center ray must hit the formerly hidden
+  // back face. This checks the rendered camera, not just a focus flag in state.
+  await page.waitForTimeout(550);
+  await page.screenshot({ path: 'test-results/studio-back-face-pivot.png' });
+  await page.getByTestId('cad-viewport').locator('canvas').click();
+  await expect.poll(async () => (await state(page)).context.selectedFace?.index).toBe(7);
+  expect((await state(page)).context.boundaryConditions).toHaveLength(0);
+});
+
 test('Included simple bracket, camera tools, layout, theme and mobile', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

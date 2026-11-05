@@ -6,6 +6,74 @@ import { validateConditions } from '../src/boundaries/conditions.js';
 import { createBoundaryVisual, faceSamples } from '../src/viewer/boundaryVisuals.js';
 import * as THREE from 'three';
 import { pickFrame } from '../src/studio/visual.js';
+import { faceFocusPose } from '../src/viewer/faceFocus.js';
+import { Viewer } from '../src/viewer/scene.js';
+
+function meshFace(mesh, first = 0, last = mesh.geometry.index.count / 3 - 1) {
+  const box = new THREE.Box3();
+  for (let i = first * 3; i <= last * 3 + 2; i++) {
+    box.expandByPoint(new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, mesh.geometry.index.getX(i)));
+  }
+  return { mesh, first, last, box };
+}
+
+test('face focus turns to the outside of a hidden back face and handles top faces without a pole singularity', () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 20, 30), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  mesh.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(mesh);
+  const camera = new THREE.PerspectiveCamera(42, 1.2, .01, 1000);
+  camera.position.set(60, -40, 30);
+  for (const [index, outward] of [[1, [-1, 0, 0]], [4, [0, 0, 1]]]) {
+    const face = meshFace(mesh, index * 2, index * 2 + 1);
+    const pose = faceFocusPose(face, bounds, camera, new THREE.Vector3(), [mesh]);
+    const direction = pose.position.clone().sub(pose.target).normalize();
+    assert.ok(direction.dot(new THREE.Vector3(...outward)) > .999);
+    assert.ok(Math.abs(direction.dot(pose.up)) < .01);
+    assert.ok(!bounds.containsPoint(pose.position));
+    const ray = new THREE.Raycaster(pose.position, pose.target.clone().sub(pose.position).normalize());
+    const hit = ray.intersectObject(mesh)[0];
+    assert.ok(hit.faceIndex >= face.first && hit.faceIndex <= face.last);
+  }
+});
+
+test('hole-wall focus looks through an opening instead of pointing through the outer wall', () => {
+  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const inner = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 10, 32, 1, true), material);
+  const outer = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 10, 32, 1, true), material);
+  const caps = [-5, 5].map(y => {
+    const cap = new THREE.Mesh(new THREE.RingGeometry(2, 5, 32), material);
+    cap.rotation.x = Math.PI / 2; cap.position.y = y; return cap;
+  });
+  const meshes = [inner, outer, ...caps];
+  meshes.forEach(mesh => mesh.updateMatrixWorld(true));
+  const bounds = new THREE.Box3().setFromObject(outer);
+  const camera = new THREE.PerspectiveCamera(42, 1.2, .01, 1000);
+  camera.position.set(25, 0, 0);
+  const pose = faceFocusPose(meshFace(inner), bounds, camera, new THREE.Vector3(), meshes);
+  const direction = pose.position.clone().sub(pose.target).normalize();
+  assert.ok(Math.abs(direction.y) > .99);
+  assert.ok(pose.position.toArray().every(Number.isFinite));
+  assert.ok(!bounds.containsPoint(pose.position));
+});
+
+test('focus motion finishes at the intended face and can be interrupted without resuming', () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 20, 30), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  const scene = new THREE.Scene(); scene.add(mesh);
+  const camera = new THREE.PerspectiveCamera(42, 1.2, .01, 1000);
+  camera.up.set(0, 0, 1); camera.position.set(60, 0, 0);
+  const viewer = Object.assign(Object.create(Viewer.prototype), { scene, camera, meshes: [mesh],
+    faces: new Map([['back', meshFace(mesh, 2, 3)]]), bounds: new THREE.Box3().setFromObject(mesh),
+    controls: { target: new THREE.Vector3(), enableDamping: true, update() {} } });
+  viewer.focus('back');
+  assert.ok(viewer.focusAnimation);
+  viewer.updateFocus(true);
+  assert.ok(camera.position.x < -5);
+  assert.equal(viewer.focusAnimation, null);
+  assert.equal(viewer.controls.enableDamping, true);
+  viewer.focus('back'); viewer.cancelFocus();
+  camera.position.set(12, 23, 34); viewer.updateFocus();
+  assert.deepEqual(camera.position.toArray(), [12, 23, 34]);
+});
 
 test('image pixels pick exact faces using the frozen camera after the live view moves', () => {
   const scene = new THREE.Scene();

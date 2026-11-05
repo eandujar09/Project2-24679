@@ -32,6 +32,12 @@ conditions, exports and solver inputs. Rejection or a changed setup clears the p
 confirmation replaces it with the applied graphic. Editing a condition previews its
 replacement without drawing a duplicate of the existing arrow.
 
+Proposing a face also centers the camera and smoothly rotates toward a visible
+side of that face. Curved surfaces use visibility checks, including looking through
+hole openings. Small targets retain some surrounding model context. Dragging cancels
+the motion; normal polling does not move the camera again. Chat confirmation and
+the user's selected face remain independent of camera movement.
+
 ## Interaction
 
 Open a STEP file, click a whole CAD face on the left, and describe the analysis in

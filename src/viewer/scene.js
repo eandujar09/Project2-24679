@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildFaceMap, meshOccurrences } from '../cad/faceMap.js';
 import { createBoundaryVisual } from './boundaryVisuals.js';
 import { conditionTypes, conditionSummary } from '../boundaries/conditions.js';
+import { faceFocusPose } from './faceFocus.js';
 
 export class Viewer {
   constructor(container, onSelect) {
@@ -22,6 +23,7 @@ export class Viewer {
     container.prepend(this.renderer.domElement);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
+    this.controls.addEventListener('start', () => this.cancelFocus());
     this.scene.add(new THREE.HemisphereLight(0xe4f5ff, 0x46516a, 2.5));
     const light = new THREE.DirectionalLight(0xffffff, 3);
     light.position.set(3, -4, 7);
@@ -70,6 +72,7 @@ export class Viewer {
     });
     this.resize.observe(container);
     this.renderer.setAnimationLoop(() => {
+      this.updateFocus();
       this.controls.update();
       this.updateClipping();
       this.renderer.render(this.scene, this.camera);
@@ -267,6 +270,7 @@ export class Viewer {
   }
 
   frame(box, reset = false) {
+    this.cancelFocus();
     if (!box || box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
     const modelSize = this.bounds.getSize(new THREE.Vector3()).length() || 1;
@@ -284,7 +288,51 @@ export class Viewer {
   }
 
   fit(reset = false) { this.frame(this.bounds, reset); }
-  focus(key) { this.frame(this.faces.get(key)?.box); }
+  focus(key) {
+    this.cancelFocus();
+    this.scene.updateMatrixWorld(true);
+    const pose = faceFocusPose(this.faces.get(key), this.bounds, this.camera, this.controls.target, this.meshes);
+    if (!pose) return;
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update();
+    const direction = this.camera.position.clone().sub(this.controls.target);
+    const distance = direction.length();
+    direction.normalize();
+    const endDirection = pose.position.clone().sub(pose.target).normalize();
+    const rotation = new THREE.Quaternion().setFromUnitVectors(direction, endDirection);
+    if (direction.dot(endDirection) < -0.9999) {
+      const axis = this.camera.up.clone().addScaledVector(direction, -this.camera.up.dot(direction));
+      if (axis.lengthSq() > 1e-8) rotation.setFromAxisAngle(axis.normalize(), Math.PI);
+    }
+    this.focusAnimation = { pose, damping, started: performance.now(), direction, distance,
+      target: this.controls.target.clone(), up: this.camera.up.clone(),
+      rotation,
+      endDistance: pose.position.distanceTo(pose.target) };
+    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) this.updateFocus(true);
+  }
+
+  cancelFocus() {
+    if (!this.focusAnimation) return;
+    this.controls.enableDamping = this.focusAnimation.damping;
+    this.focusAnimation = null;
+  }
+
+  updateFocus(finish = false) {
+    const animation = this.focusAnimation;
+    if (!animation) return;
+    const t = finish ? 1 : Math.min((performance.now() - animation.started) / 450, 1);
+    const eased = t * t * (3 - 2 * t);
+    const rotation = new THREE.Quaternion().slerp(animation.rotation, eased);
+    const direction = animation.direction.clone().applyQuaternion(rotation);
+    this.controls.target.lerpVectors(animation.target, animation.pose.target, eased);
+    this.camera.position.copy(this.controls.target).addScaledVector(direction,
+      THREE.MathUtils.lerp(animation.distance, animation.endDistance, eased));
+    this.camera.up.lerpVectors(animation.up, animation.pose.up, eased).normalize();
+    this.camera.lookAt(this.controls.target);
+    if (t === 1) this.cancelFocus();
+    this.labelsDirty = true;
+  }
 
   updateClipping() {
     if (!this.boundingSphere) return;
@@ -302,6 +350,7 @@ export class Viewer {
   }
 
   dispose() {
+    this.cancelFocus();
     this.renderer.setAnimationLoop(null);
     this.resize.disconnect();
     this.controls.dispose();

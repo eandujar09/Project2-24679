@@ -34,6 +34,9 @@ class ScriptedTestModel:
             name = 'run_mechanical_code'; args.update(title='Generated mesh study', objective='Synthetic browser fixture', code="for size in [6, 4, 3]:\n    print(size)\n")
         elif text.startswith('fix this face'):
             name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'], kind='fixed', values={})
+        elif text.startswith('fix the back face'):
+            face = next(f for f in c['faces'] if f['index'] == 7)
+            name = 'apply_condition'; args.update(face_key=face['key'], kind='fixed', values={})
         elif text.startswith('highlight face 2'):
             name = 'highlight_faces'; args.update(face_keys=[f['key'] for f in c['faces'] if f['index'] == 2], focus=True)
         elif text.startswith('apply 100 n'):

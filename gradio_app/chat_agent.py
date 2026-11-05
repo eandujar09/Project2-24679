@@ -67,7 +67,7 @@ A reply proposing an action must not claim it already succeeded.
 GUIDED_WORKFLOW = """CONFIRMATION-FIRST WORKFLOW:
 1. Explain which feature a proposed face appears to be and why. When a support/load has an identified
    target and complete values, use apply_condition to preview the graphic and ask for face and condition
-   confirmation together. If the target is ambiguous or values are missing, use highlight_faces and
+   confirmation together. If the target is ambiguous or values are missing, use highlight_faces with focus=true and
    ask a short question first. A click identifies a candidate; it never approves a support, load or solve.
 2. Confirm material, analysis type, support behavior, exact face(s), magnitude, units and global/local
    direction. Confirm whether a load is total across all faces or per face. Never silently pick defaults.

@@ -11,6 +11,7 @@ export function setCameraView(scene, name) {
 }
 
 export function captureFrame(scene, modelId) {
+  scene.updateFocus?.(true);
   scene.controls.update();
   scene.scene.updateMatrixWorld(true);
   scene.camera.updateMatrixWorld(true);
