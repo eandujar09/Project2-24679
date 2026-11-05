@@ -17,9 +17,9 @@ def default_python():
 
 
 def prepare_request(workspace, model_id, element_size_mm=3.0):
-    snapshot = workspace.project_snapshot(model_id)
+    snapshot = workspace.solver_snapshot(model_id)
     step = workspace.root / "models" / f"{model_id}.step"
-    if hashlib.sha256(step.read_bytes()).hexdigest() != model_id:
+    if hashlib.sha256(step.read_bytes()).hexdigest() != snapshot["modelId"]:
         raise ValueError("The saved STEP file no longer matches its model hash.")
     signatures = mechanical_signatures(step)
     # Verify the signature traversal is the same identity used by the annotation UI.
@@ -31,7 +31,7 @@ def prepare_request(workspace, model_id, element_size_mm=3.0):
         if (abs(previous["areaMm2"] - face["areaMm2"]) > max(1e-7, face["areaMm2"] * 1e-8) or
                 any(abs(a - b) > 1e-7 for a, b in zip(previous["centroidMm"], face["centroidMm"]))):
             raise ValueError("Stored face identity disagrees with the current CAD importer.")
-    request = {"schemaVersion": 1, "modelId": model_id, "stepFile": str(step),
+    request = {"schemaVersion": 1, "modelId": snapshot["modelId"], "stepFile": str(step),
                "faceMapping": snapshot["faceMapping"], "units": snapshot["units"],
                "faceSignatures": signatures, "boundaryConditions": snapshot["boundaryConditions"],
                "comments": snapshot["comments"],
@@ -56,9 +56,9 @@ def run_project(workspace, model_id, python_executable, element_size_mm=3.0, tim
 
 def prepare_code_request(workspace, model_id, program, selected_face=None):
     from mechanical.program import validate_program
-    snapshot = workspace.project_snapshot(model_id)
+    snapshot = workspace.solver_snapshot(model_id)
     step = workspace.root / "models" / f"{model_id}.step"
-    if hashlib.sha256(step.read_bytes()).hexdigest() != model_id:
+    if hashlib.sha256(step.read_bytes()).hexdigest() != snapshot["modelId"]:
         raise ValueError("The saved STEP file no longer matches its model hash.")
     program = dict(program, sha256=validate_program(program))
     warning = None
@@ -69,7 +69,7 @@ def prepare_code_request(workspace, model_id, program, selected_face=None):
     except ValueError as exc:
         signatures = []
         warning = str(exc)
-    request = {"schemaVersion": 2, "modelId": model_id, "stepFile": str(step),
+    request = {"schemaVersion": 2, "modelId": snapshot["modelId"], "stepFile": str(step),
                "faceMapping": snapshot['faceMapping'], "units": snapshot['units'],
                "faceSignatures": signatures, "faceMappingWarning": warning,
                "sourceFaces": snapshot['faces'], "selectedFace": selected_face,

@@ -20,6 +20,11 @@ message retries use request IDs to avoid duplicate execution. Chat sessions
 survive a page refresh while this process runs; saved CAD and conditions survive
 a server restart. New conversation preserves saved conditions and job records.
 
+Import CAD always starts a new, empty setup, even for an identical STEP file.
+Choose Saved Models to resume previous supports, loads and comments. Each import
+has an independent setup ID; portable annotations and Mechanical requests still
+use the exact CAD SHA-256, so face mapping and file integrity checks are unchanged.
+
 ## Interaction
 
 Open a STEP file, click a whole CAD face on the left, and describe the analysis in

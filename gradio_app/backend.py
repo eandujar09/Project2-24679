@@ -1,6 +1,6 @@
 """Persistent project services; no Gradio or Mechanical dependency.
 
-The Mechanical runner consumes project_snapshot(), imports the original STEP,
+The Mechanical runner consumes solver_snapshot(), imports the original STEP,
 and explicitly resolves these CAD faces to Mechanical entities.
 """
 
@@ -122,21 +122,24 @@ class Workspace:
             projects = [json.loads(row[0]) for row in db.execute("SELECT document FROM projects ORDER BY rowid DESC")]
         return [(f'{p["filename"]} · {p["id"][:10]}', p["id"]) for p in projects]
 
-    def open_step(self, filename):
+    def open_step(self, filename, *, fresh=False):
+        """Import a separate setup when fresh; legacy callers may reopen by CAD hash."""
         path = Path(filename)
         if path.suffix.lower() not in (".step", ".stp"):
             raise ValueError("Choose a .step or .stp file.")
         content = path.read_bytes()
-        model_id = hashlib.sha256(content).hexdigest()
+        cad_hash = hashlib.sha256(content).hexdigest()
+        model_id = uuid.uuid4().hex if fresh else cad_hash
         with self.lock:
-            try:
-                return self.get(model_id)
-            except ValueError:
-                pass
+            if not fresh:
+                try:
+                    return self.get(model_id)
+                except ValueError:
+                    pass
             meshes, faces = geometry.read_step(path)
             (self.root / "models" / f"{model_id}.step").write_bytes(content)
             geometry.save_meshes(self.root / "meshes" / f"{model_id}.npz", meshes)
-            project = {"id": model_id, "filename": path.name, "importedAt": now(),
+            project = {"id": model_id, "cadSha256": cad_hash, "filename": path.name, "importedAt": now(),
                        "faceMapping": geometry.FACE_NAMESPACE, "faces": faces,
                        "comments": [], "boundaryConditions": []}
             with self.connect() as db:
@@ -179,12 +182,13 @@ class Workspace:
         return project
 
     def import_annotations(self, model_id, path):
-        incoming = validate_annotations(json.loads(Path(path).read_text(encoding="utf-8-sig")), model_id)
         with self.lock, self.connect() as db:
             project = self.get(model_id)
+            cad_hash = project.get("cadSha256", model_id)
+            incoming = validate_annotations(json.loads(Path(path).read_text(encoding="utf-8-sig")), cad_hash)
             for collection, records in incoming.items():
                 merged = {r["id"]: r for r in project[collection]}
-                merged.update({r["id"]: r for r in records})
+                merged.update({r["id"]: dict(r, modelId=model_id) for r in records})
                 project[collection] = list(merged.values())
             self._write(db, project)
         return project
@@ -192,14 +196,23 @@ class Workspace:
     def project_snapshot(self, model_id):
         """Solver-neutral mm/N/MPa data; face keys are NOT Mechanical IDs."""
         project = self.get(model_id)
-        return {"schemaVersion": 2, "modelId": model_id, "filename": project["filename"],
+        return {"schemaVersion": 2, "modelId": model_id, "cadSha256": project.get("cadSha256", model_id),
+                "filename": project["filename"],
                 "faceMapping": project["faceMapping"], "units": {"length": "mm", "force": "N", "pressure": "MPa"},
                 "faces": project["faces"], "comments": project["comments"],
                 "boundaryConditions": project["boundaryConditions"]}
 
+    def solver_snapshot(self, model_id):
+        """Keep portable annotations and worker identity bound to the exact STEP bytes."""
+        snapshot = self.project_snapshot(model_id)
+        snapshot["modelId"] = snapshot["cadSha256"]
+        for collection in ("comments", "boundaryConditions"):
+            snapshot[collection] = [dict(row, modelId=snapshot["modelId"]) for row in snapshot[collection]]
+        return snapshot
+
     def export_annotations(self, model_id):
         path = self.root / "exports" / f"{uuid.uuid4().hex}.json"
-        path.write_text(json.dumps(self.project_snapshot(model_id), indent=2, allow_nan=False), encoding="utf-8")
+        path.write_text(json.dumps(self.solver_snapshot(model_id), indent=2, allow_nan=False), encoding="utf-8")
         return str(path)
 
     def preview(self, model_id, selected=None):

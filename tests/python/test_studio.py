@@ -90,6 +90,31 @@ class StudioTests(unittest.TestCase):
         self.assertTrue(other['confirmationRequired'])
         self.assertFalse(other['visualAssistance']['enabled'])
 
+    def test_upload_starts_clean_and_saved_models_restore_without_affecting_other_windows(self):
+        saved = self.workspace.get(self.mid)
+        other_sid = self.client.post('/api/studio/sessions').json()['context']['sessionId']
+        other_base = '/api/studio/sessions/' + other_sid
+        self.client.post(other_base + '/open', json={'model_id': self.mid}).raise_for_status()
+        content = (self.workspace.root / 'models' / (self.mid + '.step')).read_bytes()
+        ids = {self.mid}
+        for _ in range(2):
+            response = self.client.post(self.base + '/upload', files={'file': ('box.step', content)})
+            response.raise_for_status()
+            state = response.json()
+            mid = state['context']['modelId']
+            self.assertNotIn(mid, ids)
+            ids.add(mid)
+            self.assertEqual(state['context']['boundaryConditions'], [])
+            self.assertEqual(state['viewer']['boundaryConditions'], [])
+            self.client.get(self.base + '/geometry', params={'model_id': mid}).raise_for_status()
+            exported = self.client.get(self.base + '/annotations').json()
+            self.assertEqual(exported['modelId'], self.mid)
+            self.assertEqual(exported['boundaryConditions'], [])
+        self.assertEqual(self.workspace.get(self.mid), saved)
+        self.assertEqual(self.client.get(other_base).json()['context']['boundaryConditions'], saved['boundaryConditions'])
+        restored = self.client.post(self.base + '/open', json={'model_id': self.mid})
+        self.assertEqual(restored.json()['context']['boundaryConditions'], saved['boundaryConditions'])
+
     def test_artifacts_are_scoped_and_clear_preserves_execution_records(self):
         exports = self.workspace.root / 'exports'
         exports.mkdir(exist_ok=True)

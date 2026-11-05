@@ -173,7 +173,7 @@ def install_studio(server, service, chat_model=None):
                             if size > 200 * 1024 * 1024:
                                 raise HTTPException(413, 'This file exceeds the 200 MB upload limit.')
                             stream.write(chunk)
-                    service.open_model(sid, service.workspace.open_step(path))
+                    service.open_model(sid, service.workspace.open_step(path, fresh=True))
             except (ValueError, OSError) as exc:
                 raise HTTPException(422, str(exc)) from exc
         return snapshot(sid)
@@ -263,7 +263,7 @@ def install_studio(server, service, chat_model=None):
         s = existing(sid)
         if not s.model_id:
             raise HTTPException(422, 'Open a CAD model first.')
-        return service.workspace.project_snapshot(s.model_id)
+        return service.workspace.solver_snapshot(s.model_id)
 
     @api.post('/connection')
     def connection():

@@ -168,6 +168,32 @@ class RequestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_request(changed)
 
+    def test_fresh_setup_keeps_exact_cad_identity_for_both_solver_paths(self):
+        from gradio_app.simulation import prepare_code_request
+        from mechanical.transfer import pack_submission, unpack_submission
+        fresh = self.workspace.open_step(self.step, fresh=True)
+        mid = fresh['id']
+        self.workspace.import_annotations(mid, self.workspace.export_annotations(self.mid))
+        request = prepare_request(self.workspace, mid)
+        code_request = prepare_code_request(self.workspace, mid, {
+            'title': 'Inspect CAD', 'objective': 'Inspect the fresh setup', 'code': 'print(ctx.geometry)'})
+        for candidate in (request, code_request):
+            self.assertEqual(candidate['modelId'], self.mid)
+            self.assertNotEqual(candidate['modelId'], mid)
+            self.assertEqual(len(validate_request(candidate)), 2)
+            destination = self.root / ('transfer-' + str(candidate['schemaVersion']))
+            destination.mkdir()
+            restored = unpack_submission(pack_submission(candidate), destination)
+            self.assertEqual(restored['boundaryConditions'], candidate['boundaryConditions'])
+        cli = prepare(self.step, self.workspace.export_annotations(mid), 3)
+        self.assertEqual(cli['boundaryConditions'], request['boundaryConditions'])
+        # Identity checks still reject altered CAD, even though setup IDs are independent.
+        (self.workspace.root / 'models' / (mid + '.step')).write_bytes(b'changed STEP')
+        with self.assertRaisesRegex(ValueError, 'model hash'):
+            prepare_request(self.workspace, mid)
+        with self.assertRaisesRegex(ValueError, 'model hash'):
+            prepare_code_request(self.workspace, mid, code_request['program'])
+
     def test_changed_stored_face_metadata_is_not_silently_remapped(self):
         project = self.workspace.get(self.mid)
         project["faces"][0]["centroidMm"][0] += 1

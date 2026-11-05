@@ -111,6 +111,25 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len(selected.faces), self.project["faces"][0]["triangleCount"])
         self.assertTrue(np.all(selected.visual.vertex_colors == [255, 199, 106, 255]))
 
+    def test_fresh_import_is_independent_and_portable_annotations_are_explicit(self):
+        saved = self.save_comment("Keep my saved setup")
+        saved = self.workspace.save_annotation(self.mid, self.key, "boundaryConditions", {"type": "fixed", "values": {}})
+        fresh = self.workspace.open_step(self.box, fresh=True)
+        self.assertNotEqual(fresh["id"], self.mid)
+        self.assertEqual(fresh["cadSha256"], self.mid)
+        self.assertEqual(fresh["faces"], saved["faces"])
+        self.assertEqual(fresh["boundaryConditions"], [])
+        self.assertEqual(fresh["comments"], [])
+        self.assertEqual(Workspace(self.data.name).get(self.mid), saved)
+        self.assertEqual(Workspace(self.data.name).get(fresh["id"]), fresh)
+        imported = self.workspace.import_annotations(fresh["id"], self.workspace.export_annotations(self.mid))
+        self.assertEqual(imported["boundaryConditions"][0]["modelId"], fresh["id"])
+        self.workspace.save_annotation(fresh["id"], self.key, "comments", {"text": "Independent edit"})
+        self.assertEqual(self.workspace.get(self.mid), saved)
+        portable = json.loads(Path(self.workspace.export_annotations(fresh["id"])).read_text())
+        self.assertEqual(portable["modelId"], self.mid)
+        self.assertEqual(len(validate_annotations(portable, self.mid)["boundaryConditions"]), 1)
+
     def test_invalid_conditions_do_not_write(self):
         for kind, values in (("force", {"x": 0, "y": 0, "z": 0}), ("pressure", {"magnitude": 0}),
                              ("pressure", {"magnitude": float("nan")}), ("force", {"x": True, "y": 0, "z": 0})):
@@ -187,9 +206,11 @@ class WorkspaceTests(unittest.TestCase):
         sid = uuid.uuid4().hex
         opened = callbacks["open_file"](str(self.box), sid)
         self.assertEqual(len(opened), 9)
+        imported_id = json.loads(opened[0])["modelId"]
+        self.assertNotEqual(imported_id, self.mid)
         selected = callbacks["select_face"](self.key, sid)
         self.assertEqual(json.loads(selected[0])["selected"], self.key)
-        picked = callbacks["pick_face"](sid, gr.EventData(None, {"modelId": self.mid, "faceKey": self.key}))
+        picked = callbacks["pick_face"](sid, gr.EventData(None, {"modelId": imported_id, "faceKey": self.key}))
         self.assertEqual(json.loads(picked[0])["selected"], self.key)
         stale = callbacks["pick_face"](sid, gr.EventData(None, {"modelId": "old-model", "faceKey": self.key}))
         self.assertTrue(all(value == gr.skip() for value in stale))
@@ -223,7 +244,8 @@ class WorkspaceTests(unittest.TestCase):
             client.predict("Add a note to this face", api_name="/respond")
             self.assertEqual(self.workspace.get(self.mid)["comments"], [])
             client.predict("Confirm", api_name="/respond")
-            self.assertEqual(self.workspace.get(self.mid)["comments"][0]["text"], "Live chat comment")
+            self.assertEqual(self.workspace.get(context["modelId"])["comments"][0]["text"], "Live chat comment")
+            self.assertEqual(self.workspace.get(self.mid)["comments"], [])
         finally:
             app.close()
 

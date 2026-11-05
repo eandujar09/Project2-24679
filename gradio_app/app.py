@@ -111,7 +111,7 @@ def build_app(workspace, service=None, chat_model=None):
             session_id = resolve_session(session_id, request)
             if not path:
                 raise ValueError('Choose a STEP file first.')
-            service.open_model(session_id, workspace.open_step(path))
+            service.open_model(session_id, workspace.open_step(path, fresh=True))
             return render(session_id)
 
         @user_errors
