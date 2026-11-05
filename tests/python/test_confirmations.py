@@ -95,3 +95,59 @@ class ConfirmationTests(unittest.TestCase):
                 revision=context['revision'], face_key=self.keys[0], kind='force',
                 values={'x': 100}), 'Apply this load.')
         self.assertIsNone(self.service.session(self.sid).pending_confirmation)
+
+    def condition_proposal(self, kind='force', values=None, **extra):
+        c = self.service.context(self.sid)
+        args = dict(model_id=self.mid, revision=c['revision'], face_key=self.keys[2],
+                    kind=kind, values=values if values is not None else {'x': 0, 'y': 0, 'z': -100})
+        return propose(self.service, self.sid, 'apply_condition', dict(args, **extra), 'Review this condition.')
+
+    def preview(self):
+        return json.loads(self.service.viewer(self.sid))['proposedBoundaryConditions']
+
+    def test_condition_previews_are_session_only_and_excluded_from_solver_and_exports(self):
+        before = self.workspace.solver_snapshot(self.mid)
+        other_sid = uuid.uuid4().hex
+        self.service.open_model(other_sid, self.workspace.get(self.mid))
+        for kind, values in [('fixed', {}), ('force', {'x': 0, 'y': 0, 'z': -100}),
+                             ('pressure', {'magnitude': 2}), ('displacement', {'x': 0, 'y': 1, 'z': 0})]:
+            with self.subTest(kind=kind):
+                self.condition_proposal(kind, values)
+                preview = self.preview()
+                self.assertEqual(len(preview), 1)
+                self.assertEqual((preview[0]['type'], preview[0]['values'], preview[0]['faceKey']), (kind, values, self.keys[2]))
+                self.assertEqual(self.workspace.solver_snapshot(self.mid), before)
+                self.assertEqual(json.loads(self.service.viewer(other_sid))['proposedBoundaryConditions'], [])
+        approved = consume_confirmation(self.service, self.sid, 'Confirm')
+        self.assertEqual(self.preview(), [])
+        apply_tool(self.service, self.sid, approved['tool'], approved['arguments'])
+        self.assertEqual(self.preview(), [])
+        self.assertEqual(len(self.workspace.get(self.mid)['boundaryConditions']), 3)
+
+    def test_rejected_stale_and_mode_changed_proposals_drop_preview_without_saving(self):
+        before = self.workspace.get(self.mid)['boundaryConditions']
+        self.condition_proposal()
+        consume_confirmation(self.service, self.sid, 'No, use the other face')
+        self.assertEqual(self.preview(), [])
+        self.condition_proposal()
+        self.service.select(self.sid, self.mid, self.keys[3])
+        self.assertEqual(self.preview(), [])
+        self.assertIsNone(consume_confirmation(self.service, self.sid, 'Confirm'))
+        self.condition_proposal()
+        self.workspace.save_annotation(self.mid, self.keys[0], 'comments', {'text': 'Changed in another window'})
+        self.assertEqual(self.preview(), [])
+        self.condition_proposal()
+        self.service.preferences(self.sid, self.service.context(self.sid)['revision'], 'autonomous', False)
+        self.assertEqual(self.preview(), [])
+        self.assertEqual(self.workspace.get(self.mid)['boundaryConditions'], before)
+
+    def test_edit_preview_identifies_replacement_but_keeps_original_until_confirmed(self):
+        original = self.workspace.get(self.mid)['boundaryConditions'][1]
+        self.condition_proposal(face_key=original['faceKey'], record_id=original['id'])
+        self.assertEqual(self.preview()[0]['replacesId'], original['id'])
+        self.assertEqual(self.workspace.get(self.mid)['boundaryConditions'][1], original)
+        approved = consume_confirmation(self.service, self.sid, 'Confirm')
+        apply_tool(self.service, self.sid, approved['tool'], approved['arguments'])
+        saved = self.workspace.get(self.mid)['boundaryConditions']
+        self.assertEqual(len(saved), 2)
+        self.assertEqual(saved[1]['values'], {'x': 0, 'y': 0, 'z': -100})

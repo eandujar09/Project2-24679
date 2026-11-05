@@ -38,6 +38,10 @@ class ScriptedTestModel:
             name = 'highlight_faces'; args.update(face_keys=[f['key'] for f in c['faces'] if f['index'] == 2], focus=True)
         elif text.startswith('apply 100 n'):
             name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'], kind='force', values={'x': 0, 'y': 0, 'z': 100})
+        elif text.startswith('change force to 200 n'):
+            original = next(row for row in c['boundaryConditions'] if row['type'] == 'force')
+            name = 'apply_condition'; args.update(face_key=original['faceKey'], record_id=original['id'],
+                                                 kind='force', values={'x': 0, 'y': 0, 'z': 200})
         elif text.startswith('use structural steel'):
             name = 'set_analysis'; args.update(material='Structural Steel', small_deformation=True)
         elif text.startswith('run simulation'):

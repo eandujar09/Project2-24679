@@ -32,9 +32,10 @@ export function faceSamples(face, limit = 7) {
   return chosen;
 }
 
-export function createBoundaryVisual(condition, face, modelSize) {
+export function createBoundaryVisual(condition, face, modelSize, { preview = false } = {}) {
   const group = new THREE.Group();
   group.userData.conditionId = condition.id;
+  group.userData.preview = preview;
   const color = new THREE.Color(conditionTypes[condition.type].color);
   // Own compact face geometry: disposing a condition never frees model buffers.
   const positions = [];
@@ -47,7 +48,7 @@ export function createBoundaryVisual(condition, face, modelSize) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   const overlay = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity: 0.26, side: THREE.DoubleSide,
+    color, transparent: true, opacity: preview ? 0.14 : 0.26, side: THREE.DoubleSide,
     depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
   }));
   overlay.renderOrder = 1;
@@ -95,5 +96,6 @@ export function createBoundaryVisual(condition, face, modelSize) {
     }
   }
   group.userData.labelPoint = samples[0]?.point.clone();
+  group.userData.labelPoints = samples.map(sample => sample.point.clone());
   return group;
 }

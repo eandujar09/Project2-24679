@@ -32,6 +32,18 @@ def state_fingerprint(service, session):
     return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
 
 
+def proposed_conditions(service, session):
+    """Viewer-only glyphs for the current proposal, never saved or sent to a solver."""
+    pending = session.pending_confirmation
+    if (session.interaction_mode != 'guided' or not pending or pending['tool'] != 'apply_condition'
+            or pending['fingerprint'] != state_fingerprint(service, session)):
+        return []
+    args = pending['arguments']
+    return [{'id': 'proposal:' + pending['fingerprint'], 'modelId': session.model_id,
+             'faceKey': args['face_key'], 'type': args['kind'], 'values': dict(args['values']),
+             'replacesId': args.get('record_id')}]
+
+
 def propose(service, sid, tool, arguments, explanation):
     args = ARGUMENT_MODELS[tool].model_validate(arguments).model_dump(exclude_none=True)
     if tool == 'apply_condition':

@@ -8,5 +8,6 @@
 .python-cad-viewer .boundary-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .python-cad-viewer .boundary-label { position: absolute; transform: translate(-50%, -130%); padding: 3px 7px; border: 1px solid var(--condition-color); border-radius: 4px; background: #111d2ced; color: #f1f5f9; font: 11px system-ui; white-space: nowrap; }
 .python-cad-viewer .boundary-label.selected { box-shadow: 0 0 0 1px #ffc76a; }
+.python-cad-viewer .boundary-label.proposed { border-style: dashed; }
 .python-cad-viewer .boundary-label[hidden] { display: none; }
 @media (max-width: 600px) { .python-cad-viewer .cad-viewport { height: 370px; } }

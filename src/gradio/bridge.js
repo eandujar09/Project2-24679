@@ -69,9 +69,9 @@ export function mount(element, props, trigger, watch) {
         conditionsJSON = undefined;
       }
       if (token !== version || disposed) return;
-      const nextConditions = JSON.stringify(state.boundaryConditions || []);
+      const nextConditions = JSON.stringify([state.boundaryConditions || [], state.proposedBoundaryConditions || []]);
       if (nextConditions !== conditionsJSON) {
-        viewer.setBoundaryConditions(state.boundaryConditions || []);
+        viewer.setBoundaryConditions(state.boundaryConditions || [], state.proposedBoundaryConditions || []);
         conditionsJSON = nextConditions;
       }
       viewer.select(state.selected || null);

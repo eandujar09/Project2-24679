@@ -77,14 +77,37 @@ test('Shared face state, chat confirmations, generated code and result downloads
 
   await send(page, 'Fix this face');
   expect((await state(page)).context.boundaryConditions).toHaveLength(0);
+  await expect(page.locator('.boundary-label.proposed')).toContainText('Proposed · Fixed support');
+  await expect(page.locator('.boundary-label.proposed')).toBeVisible();
+  await page.screenshot({ path: 'test-results/studio-proposed-support.png' });
+  // Rejection removes the preview without saving a support; confirmation stays in chat.
+  await send(page, 'No, let me reconsider');
+  await expect(page.locator('.boundary-label.proposed')).toHaveCount(0);
+  expect((await state(page)).context.boundaryConditions).toHaveLength(0);
+  await send(page, 'Fix this face');
   await confirm(page);
+  await expect(page.locator('.boundary-label.proposed')).toHaveCount(0);
+  await expect(page.locator('.boundary-label[data-condition-state="applied"]')).toHaveCount(1);
   await expect.poll(async () => (await state(page)).context.boundaryConditions.length).toBe(1);
   await send(page, 'Highlight face 2');
   await expect(page.locator('.highlight-info')).toContainText('Face 2');
   await expect(page.getByTestId('selected-face')).toContainText('Face 1');
   await selectFace(page, 2);
   await send(page, 'Apply 100 N along +Z');
+  await expect(page.locator('.boundary-label.proposed')).toContainText('Proposed · Force · X 0, Y 0, Z 100 N');
+  await expect(page.locator('.boundary-label.proposed')).toBeVisible();
+  expect((await state(page)).context.boundaryConditions).toHaveLength(1);
+  await page.screenshot({ path: 'test-results/studio-proposed-force.png' });
   await confirm(page);
+  await expect(page.locator('.boundary-label.proposed')).toHaveCount(0);
+  await expect(page.locator('.boundary-label[data-condition-state="applied"]')).toHaveCount(2);
+  await send(page, 'Change force to 200 N');
+  await expect(page.locator('.boundary-label')).toHaveCount(2);
+  await expect(page.locator('.boundary-label.proposed')).toContainText('Z 200 N');
+  expect((await state(page)).context.boundaryConditions.find(b => b.type === 'force').values.z).toBe(100);
+  await send(page, 'No, keep the original load');
+  await expect(page.locator('.boundary-label.proposed')).toHaveCount(0);
+  await expect(page.locator('.boundary-label').filter({ hasText: 'Force' })).toContainText('Z 100 N');
   await send(page, 'Use Structural Steel and small deformations');
   await confirm(page);
   await page.getByRole('button', { name: 'Simulation setup', exact: true }).click();

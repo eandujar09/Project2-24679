@@ -184,12 +184,14 @@ class ChatWorkspace:
         return {key: report.get(key) for key in ('status', 'kind', 'title', 'modelId', 'jobId', 'results', 'mesh', 'messages', 'error', 'limitations', 'tables', 'metrics', 'verifiedSolves', 'geometry', 'stdout', 'traceback', 'errorStage', 'programSHA256')}
 
     def viewer(self, sid):
+        from .chat_confirmations import proposed_conditions
         with self.lock:
             s = self.session(sid)
             if not s.model_id:
                 return ''
             return self.workspace.viewer_state(s.model_id, s.selected, highlighted=s.highlighted,
-                       focus_face=s.focus_face, focusToken=s.focus_token, revision=s.revision, sessionId=sid)
+                       focus_face=s.focus_face, focusToken=s.focus_token, revision=s.revision, sessionId=sid,
+                       proposedBoundaryConditions=proposed_conditions(self, s))
 
     def _checked(self, sid, model_id, revision):
         s = self.existing(sid)

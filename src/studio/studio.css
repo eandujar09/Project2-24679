@@ -93,6 +93,7 @@ kbd {font:10px Inter,sans-serif;background:var(--border);padding:2px 4px;border-
 .boundary-labels {position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .boundary-label {position:absolute;transform:translate(-50%,-130%);padding:3px 7px;border:1px solid var(--condition-color);border-radius:3px;background:color-mix(in srgb,var(--surface) 95%,transparent);color:var(--fg);font:10px Inter,sans-serif;white-space:nowrap}
 .boundary-label.selected {box-shadow:0 0 0 1px var(--selected)}
+.boundary-label.proposed {border-style:dashed}
 .boundary-label[hidden] {display:none}
 .drop-overlay {position:absolute;inset:10px;display:grid;place-items:center;background:#29ffa415;border:1px dashed var(--mint);color:var(--mint);z-index:6;pointer-events:none}
 .split-handle {position:relative;flex:0 0 1px;background:var(--border-strong);cursor:col-resize;z-index:6;touch-action:none}

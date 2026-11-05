@@ -42,8 +42,11 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
   useEffect(() => {
     const scene = viewer.current;
     if (!scene || loaded !== state?.modelId || !loaded) return;
-    const key = JSON.stringify([loaded, state.boundaryConditions]);
-    if (conditionKey.current !== key) { scene.setBoundaryConditions(state.boundaryConditions || []); conditionKey.current = key; }
+    const key = JSON.stringify([loaded, state.boundaryConditions, state.proposedBoundaryConditions]);
+    if (conditionKey.current !== key) {
+      scene.setBoundaryConditions(state.boundaryConditions || [], state.proposedBoundaryConditions || []);
+      conditionKey.current = key;
+    }
     scene.select(state.selected || null);
     scene.highlight(state.highlighted || []);
     const token = `${loaded}:${state.focusToken}`;

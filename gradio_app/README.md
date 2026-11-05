@@ -25,6 +25,13 @@ Choose Saved Models to resume previous supports, loads and comments. Each import
 has an independent setup ID; portable annotations and Mechanical requests still
 use the exact CAD SHA-256, so face mapping and file integrity checks are unchanged.
 
+In Guided mode, proposed supports and loads appear in the viewport before approval,
+with a dashed “Proposed” label and the actual support glyph or force/pressure arrow.
+Confirmation stays in chat. These previews are session-only and excluded from saved
+conditions, exports and solver inputs. Rejection or a changed setup clears the preview;
+confirmation replaces it with the applied graphic. Editing a condition previews its
+replacement without drawing a duplicate of the existing arrow.
+
 ## Interaction
 
 Open a STEP file, click a whole CAD face on the left, and describe the analysis in

@@ -191,27 +191,34 @@ export class Viewer {
     });
   }
 
-  setBoundaryConditions(conditions) {
+  setBoundaryConditions(conditions, proposals = []) {
     this.disposeGroup(this.boundaryGroup);
     this.boundaryGroup.clear();
     this.boundaryLabels.replaceChildren();
     this.boundaryLabelEntries = [];
     if (!this.bounds) return;
     const modelSize = this.bounds.getSize(new THREE.Vector3()).length() || 1;
-    for (const condition of conditions) {
+    // An edit previews its replacement without duplicating the old arrow. The
+    // saved condition remains untouched and returns if the proposal is dismissed.
+    const replaced = new Set(proposals.map(condition => condition.replacesId).filter(Boolean));
+    const displayed = [...conditions.filter(condition => !replaced.has(condition.id)).map(condition => ({ condition, preview: false })),
+      ...proposals.map(condition => ({ condition, preview: true }))];
+    for (const { condition, preview } of displayed) {
       const face = this.faces.get(condition.faceKey);
       if (!face) continue;
-      const visual = createBoundaryVisual(condition, face, modelSize);
+      const visual = createBoundaryVisual(condition, face, modelSize, { preview });
       this.boundaryGroup.add(visual);
       if (!visual.userData.labelPoint) continue;
       const element = document.createElement('div');
       element.className = 'boundary-label';
+      element.classList.toggle('proposed', preview);
+      element.dataset.conditionState = preview ? 'proposed' : 'applied';
       element.dataset.conditionId = condition.id;
       element.style.setProperty('--condition-color', conditionTypes[condition.type].color);
-      element.textContent = `${conditionTypes[condition.type].label} · ${conditionSummary(condition)}`;
+      element.textContent = `${preview ? 'Proposed · ' : ''}${conditionTypes[condition.type].label} · ${conditionSummary(condition)}`;
       element.classList.toggle('selected', condition.faceKey === this.selected);
       this.boundaryLabels.append(element);
-      this.boundaryLabelEntries.push({ element, point: visual.userData.labelPoint, faceKey: condition.faceKey });
+      this.boundaryLabelEntries.push({ element, points: visual.userData.labelPoints, faceKey: condition.faceKey });
     }
     this.labelsDirty = true;
   }
@@ -228,12 +235,22 @@ export class Viewer {
     // Stack labels on the same face instead of covering each other.
     const faceOffsets = new Map();
     for (const entry of this.boundaryLabelEntries) {
-      const projected = entry.point.clone().project(this.camera);
-      const direction = entry.point.clone().sub(this.camera.position);
-      const distance = direction.length();
-      this.boundaryRaycaster.set(this.camera.position, direction.normalize());
-      const first = this.boundaryRaycaster.intersectObjects(this.meshes, false)[0];
-      entry.element.hidden = Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1 || Math.abs(projected.z) > 1 || (first && first.distance < distance - tolerance);
+      // On curved faces the first glyph may be behind the solid. Anchor the
+      // label to a visible glyph, retaining occlusion when the entire face is hidden.
+      let projected;
+      for (const point of entry.points) {
+        const candidate = point.clone().project(this.camera);
+        if (Math.abs(candidate.x) > 1 || Math.abs(candidate.y) > 1 || Math.abs(candidate.z) > 1) continue;
+        const direction = point.clone().sub(this.camera.position);
+        const distance = direction.length();
+        this.boundaryRaycaster.set(this.camera.position, direction.normalize());
+        const first = this.boundaryRaycaster.intersectObjects(this.meshes, false)[0];
+        if (first && first.distance < distance - tolerance) continue;
+        projected = candidate;
+        break;
+      }
+      entry.element.hidden = !projected;
+      if (!projected) continue;
       const offset = faceOffsets.get(entry.faceKey) || 0;
       faceOffsets.set(entry.faceKey, offset + 1);
       entry.element.style.left = `${(projected.x + 1) * width / 2}px`;
