@@ -1,0 +1,6 @@
+# Optional renderer only. Requires access to the separate private renderer repo.
+ansys-fluent-mcp @ git+https://github.com/cmuchancel/ansys-fluent-mcp.git@3ff6cf7b6f2997b5fa0b5f2cd896c7ba1ab2fbc0
+ansys-fluent-core==0.43.0
+ansys-units==0.15.0
+fastmcp==3.4.11
+pytest>=8,<10

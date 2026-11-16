@@ -68,6 +68,9 @@ def normalize_conditions(records, face_keys):
 
 
 def validate_request(request):
+    if request.get('schemaVersion') == 3:
+        from fluent.contract import validate_request as validate_fluent
+        return validate_fluent(request)
     is_program = request.get("schemaVersion") == 2
     if request.get("schemaVersion") not in (1, 2) or request.get("faceMapping") != "python-ocp-v1":
         raise ValueError("Unsupported Mechanical request or CAD face namespace.")

@@ -6,6 +6,11 @@ from pathlib import Path
 
 def setup_program(session, conditions):
     """Serialize the existing UI setup; never infer new engineering assumptions."""
+    from fluent.contract import KINDS
+    conditions = [r for r in conditions if r['type'] not in KINDS]
+    from .thermal import KINDS as THERMAL_KINDS
+    if any(r['type'] in THERMAL_KINDS for r in conditions):
+        raise ValueError('Thermal conditions require an actual generated thermal analysis. Do not reconstruct them as a structural setup.')
     if conditions and (session.material is None or session.small_deformation is None):
         raise ValueError('Establish the material and analysis assumptions in chat before exporting these conditions.')
     code = "ctx.record('exportOnly', True)\n"
@@ -64,11 +69,15 @@ def export_options(service, session):
                'solved': {'enabled': False, 'reason': 'Complete a successful simulation first.'}}
     if not session.model_id:
         return options
+    project = service.workspace.get(session.model_id)
+    from .thermal import KINDS as THERMAL_KINDS
+    thermal_setup = ((project.get('simulationIntent') or {}).get('type') == 'heat_transfer'
+                     or any(r['type'] in THERMAL_KINDS for r in project['boundaryConditions']))
     if native_path(service, session.result):
         options['setup'] = {'enabled': True, 'reason': 'Mechanical model and analysis setup.'}
     elif session.program_attempts or session.result:
         options['setup']['reason'] = 'Prepare the current analysis again to create its native export.'
-    elif session.material is not None and session.small_deformation is not None:
+    elif session.material is not None and session.small_deformation is not None and not thermal_setup:
         options['setup'] = {'enabled': True, 'reason': 'Confirmed setup; no solve required.'}
     if native_path(service, session.result, 'solved'):
         options['solved'] = {'enabled': True, 'reason': 'Mechanical project including solver results.'}

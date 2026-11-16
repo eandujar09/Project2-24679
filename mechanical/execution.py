@@ -20,7 +20,9 @@ def execute_request(request, directory, python_executable, timeout_seconds=900):
     validate_request(request)
     write_json(directory / "request.json", request)
     output = directory / "results"
-    module = "mechanical.agent_run" if request.get("schemaVersion") == 2 else "mechanical.run"
+    solver = 'Fluent' if request.get('solver') == 'fluent' else 'Mechanical'
+    module = ('fluent.agent_run' if request.get('schemaVersion') == 3 else
+              'mechanical.agent_run' if request.get('schemaVersion') == 2 else 'mechanical.run')
     command = [str(executable), "-m", module, "--request", str(directory / "request.json"),
                "--output-dir", str(output)]
     timed_out = False
@@ -41,13 +43,13 @@ def execute_request(request, directory, python_executable, timeout_seconds=900):
     report_path = output / "report.json"
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {
         "status": "failed", "modelId": request["modelId"],
-        "error": "Mechanical worker did not produce a report. See run.log."}
+        "error": f"{solver} worker did not produce a report. See run.log."}
     if code != 0:
         report["status"] = "failed"
         if timed_out:
-            report["error"] = f"Mechanical timed out after {timeout_seconds} seconds; its worker was stopped."
+            report["error"] = f"{solver} timed out after {timeout_seconds} seconds; its worker was stopped."
         else:
-            report.setdefault("error", f"Mechanical worker exited with code {code}; see run.log.")
+            report.setdefault("error", f"{solver} worker exited with code {code}; see run.log.")
     report.update(workerExitCode=code, runDirectory=str(directory))
     write_json(directory / "report.json", report)
     return report

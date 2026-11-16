@@ -1,17 +1,19 @@
-# Mac development with remote Ansys Mechanical
+# Mac development with remote Ansys
 
-The Mac runs the Gradio CAD workspace. Simulations send the exact STEP model and
-saved conditions through the remote OpenCode API over Tailscale, run the fixed
-Mechanical worker on Windows, and download the report, contours, and project.
+The Mac runs the Studio CAD/chat workspace. Simulations send the exact STEP model
+and saved conditions through the remote OpenCode API over Tailscale, run a
+Mechanical or Fluent worker on Windows, and download reports, plots and artifacts.
 The right panel is a coding agent that gathers the setup and authors PyMechanical
-Python for the uploaded geometry. The worker executes that source through the
+or PyFluent Python for the uploaded geometry. The worker executes that source through the
 OpenCode API in a fresh, time-limited Mechanical job; no browser
-automation or SSH is required. See [Chat and MCP](./gradio_app/README.md).
+automation or SSH is required. Start with the current [setup guide](docs/SETUP.md)
+and [architecture](docs/ARCHITECTURE.md); the detailed instructions below retain
+the original Mechanical connection path.
 
 ## Start and develop locally
 
 Double-click **Start Mac App.command**, then open <http://127.0.0.1:7860>.
-The Python environment and Node dependencies are installed in this checkout.
+Install the Python environment and Node dependencies before first use.
 From a terminal in the repository:
 
 ```sh

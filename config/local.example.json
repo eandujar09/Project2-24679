@@ -1,0 +1,10 @@
+{
+  "MECHANICAL_TRANSPORT": "opencode",
+  "MECHANICAL_REMOTE_DIR": "C:/path/to/project2-worker",
+  "MECHANICAL_REMOTE_PYTHON": "C:/path/to/mechanical-venv/Scripts/python.exe",
+  "MECHANICAL_REMOTE_PLATFORM": "windows",
+  "FLUENT_REMOTE_DIR": "C:/path/to/project2-worker",
+  "FLUENT_REMOTE_PYTHON": "C:/path/to/fluent-venv/Scripts/python.exe",
+  "CAD_CHAT_PROVIDER_ID": "YOUR_CONFIGURED_PROVIDER",
+  "CAD_CHAT_MODEL": "YOUR_CONFIGURED_MODEL"
+}

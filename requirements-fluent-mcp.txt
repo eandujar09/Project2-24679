@@ -1,0 +1,5 @@
+# Separate Python >=3.12 environment. Do not install into .venv-fluent:
+# the MCP server depends on a newer PyFluent than the bounded solver worker.
+ansys-fluent-mcp==0.8.0
+ansys-fluent-core==0.43.0
+mcp>=1.20,<2

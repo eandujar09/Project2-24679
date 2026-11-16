@@ -1,5 +1,8 @@
 # Windows demo hosting
 
+Current package: [November 15 deployment audit](docs/DEPLOYMENT.md),
+[setup guide](docs/SETUP.md) and [verification](docs/VERIFICATION.md).
+
 The demo is available at **http://100.88.230.43:7860/** on the existing Windows
 OpenCode/Ansys machine. Connect to Tailscale and sign in with the existing
 OpenCode username and password. This is a private VPN address, not a public
@@ -12,9 +15,10 @@ Closing a browser tab does not stop it.
 
 ## Use the demo
 
-Open the folder panel on the left and choose **simple-bracket.step**. It is
-already saved on the Windows host. The [guided prompts](examples/simple-bracket/README.md)
-walk through the back support, tip load, assumptions, and mesh study.
+Import the included [simple-bracket.step](examples/simple-bracket/simple-bracket.step)
+for an empty setup. The folder panel opens saved models and may restore their
+previous conditions. The [walkthrough](docs/DEMO.md) covers the back support,
+tip load, assumptions and mesh study.
 
 The Windows workspace is separate from the Mac's workspace. Uploaded CAD and
 confirmed setup annotations persist on Windows; conversations and unconfirmed
@@ -31,8 +35,8 @@ demo workspace with one login, not isolated accounts for multiple customers.
 - Current launch record: `.env.host-state.json`
 - Startup shortcut: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Project2 Simulation Studio.lnk`
 
-The existing Ansys worker and its Python environment are unchanged. Studio uses
-the same authenticated OpenCode API for chatbot calls and Ansys jobs. Credentials
+Studio uses dedicated Mechanical and Fluent worker environments and
+the authenticated OpenCode API for chatbot calls and Ansys jobs. Credentials
 remain in ignored configuration files and were not committed to GitHub.
 
 To restart Studio from PowerShell on the Windows host, first check the recorded
@@ -74,7 +78,11 @@ at `%LOCALAPPDATA%\Project2Studio\.venv` and install `requirements-gradio.txt` i
 it. The current host already has this environment. Future requirements changes
 must also be installed there before deploying.
 
-## Verified for this deployment
+## Original November 5 hosting checks
+
+These are historical deployment checks. The November 15 package repeats the
+expanded 196-test Python suite, 17 JavaScript tests and nine Studio browser tests;
+see the linked verification record above.
 
 - Authenticated browser access from the Mac over Tailscale.
 - Simple STEP import and rendering: one solid, nine faces.

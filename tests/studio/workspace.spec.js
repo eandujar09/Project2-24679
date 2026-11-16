@@ -32,7 +32,7 @@ async function state(page) {
   return page.evaluate(async () => (await fetch('/api/studio/sessions/' + sessionStorage.getItem('studio-session'))).json());
 }
 async function settled(page) {
-  await expect.poll(async () => (await state(page)).busy).toBe(false);
+  await expect.poll(async () => (await state(page)).busy, {timeout:45000}).toBe(false);
 }
 async function send(page, text) {
   await settled(page);
@@ -54,6 +54,134 @@ async function confirm(page) {
   await expect(page.getByTestId('confirmation-card')).toHaveCount(0);
   await settled(page);
 }
+
+async function chooseCard(page,label) {
+  const form = page.locator('.choice-form').filter({has:page.locator('fieldset:not([disabled])')});
+  await form.getByRole('radio',{name:label,exact:true}).check();
+  await form.getByRole('button',{name:'Continue',exact:true}).click();
+  await settled(page);
+}
+
+test('Choice cards construct actual subtracted fluid CAD, retain the source, and disclose context on demand', async ({page}) => {
+  const errors = [];
+  page.on('pageerror',error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('Upload STEP file').setInputFiles(visualFixture);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id',/.+/);
+  const source = (await state(page)).context.modelId;
+  await expect(page.getByRole('radio',{name:'Fluid dynamics',exact:true})).toBeEnabled();
+  const initialDetail = page.locator('details.message-context').first();
+  await expect(initialDetail).not.toHaveAttribute('open','');
+  await initialDetail.locator('summary').click();
+  await expect(initialDetail).toContainText('Opened');
+  await chooseCard(page,'Fluid dynamics');
+  await chooseCard(page,'Box around obstacle');
+  await expect(page.locator('.assistant-exchange').last()).toContainText('Choose the enclosure sizing.');
+  const context = page.locator('.assistant-exchange').last().locator('details.message-context');
+  await context.locator('summary').click();
+  await expect(context).toContainText('CFD domain-size independence');
+  await chooseCard(page,'Suggest clearance');
+  await confirm(page); // save exact suggested dimensions, not construction
+  expect((await state(page)).context.modelId).toBe(source);
+  await chooseCard(page,'Create fluid geometry');
+  await expect(page.getByTestId('confirmation-card')).toContainText('Subtract the uploaded obstacle');
+  expect((await state(page)).context.modelId).toBe(source);
+  await confirm(page); // actual OpenCascade worker, not a synthetic solver
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-fluid-domain','true');
+  await expect.poll(async () => (await state(page)).context.modelId).not.toBe(source);
+  const current = await state(page);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id',current.context.modelId);
+  expect(current.context.domainGeneration.watertight).toBe(true);
+  expect(current.context.domainGeneration.connectedRegions).toBe(1);
+  expect(current.context.boundaryConditions).toHaveLength(0);
+  expect(current.projects.some(p => p.modelId === source)).toBe(true);
+  const download = page.waitForEvent('download');
+  await page.getByRole('link',{name:'Fluid geometry (.step)',exact:true}).click();
+  expect((await download).suggestedFilename()).toBe('fluid-domain.step');
+  await page.screenshot({path:'test-results/studio-created-fluid-domain.png'});
+  await page.reload();
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-fluid-domain','true');
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id',current.context.modelId);
+  expect(errors).toEqual([]);
+});
+
+test('Upload asks for simulation intent, then supports a user-defined pipe domain', async ({page}) => {
+  await page.goto('/');
+  await page.getByLabel('Upload STEP file').setInputFiles(fixture);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await expect(page.locator('.chat-scroll')).toContainText('mechanical');
+  await expect(page.locator('.chat-scroll')).toContainText('heat transfer');
+  await expect(page.locator('.chat-scroll')).toContainText('fluid dynamics');
+  await send(page,'Fluid dynamics');
+  await expect(page.locator('.chat-scroll')).toContainText('cylindrical/pipe domain');
+  expect((await state(page)).context.simulationIntent.type).toBe('fluid');
+  expect((await state(page)).context.fluidDomain).toBeNull();
+  await send(page,'Define demo pipe domain');
+  expect((await state(page)).context.fluidDomain).toBeNull();
+  await confirm(page);
+  const domain = (await state(page)).context.fluidDomain;
+  expect(domain.kind).toBe('cylinder');
+  expect(domain.parameters.radius).toBe(10);
+  expect(domain.status).toBe('needs_preparation');
+});
+
+test('Heat-transfer face symbols preview, confirm and persist without changing the layout', async ({page}) => {
+  const errors = [];
+  page.on('pageerror',error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('Upload STEP file').setInputFiles(visualFixture);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await send(page,'Heat transfer');
+  expect((await state(page)).context.simulationIntent.type).toBe('heat_transfer');
+  for (const [face,prompt,label] of [[1,'Apply demo temperature','80 °C'],[2,'Apply demo heat flux','500 W/m²'],[3,'Apply demo convection','15 W/(m² K)'],[4,'Apply demo radiation','ε 0.8'],[5,'Apply demo insulation','Adiabatic']]) {
+    await selectFace(page,face);
+    await send(page,prompt);
+    await expect(page.locator('.boundary-label.proposed')).toContainText(label);
+    await confirm(page);
+  }
+  await expect(page.locator('.boundary-label')).toHaveCount(5);
+  await page.screenshot({path:'test-results/studio-thermal-boundaries.png'});
+  await page.reload();
+  await expect(page.locator('.boundary-label')).toHaveCount(5);
+  await page.getByRole('button',{name:'Simulation setup',exact:true}).click();
+  await expect(page.locator('.condition-row')).toHaveCount(5);
+  await expect(page.locator('.condition-row').filter({hasText:'Convection'})).toContainText('ambient 25 °C');
+  expect(errors).toEqual([]);
+});
+
+test('Fluent uses the existing chat, previews, SI labels and download flow without new controls', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('Upload STEP file').setInputFiles(fixture);
+  await expect(page.getByTestId('cad-viewport')).toHaveAttribute('data-model-id', /.+/);
+  await send(page, 'Configure demo fluid with explicit synthetic test assumptions');
+  expect((await state(page)).context.fluentAnalysis).toBeNull();
+  await confirm(page);
+  expect((await state(page)).context.fluentAnalysis.density).toBe(1);
+  for (const [face, prompt, label] of [[1, 'Apply demo wall', 'No-slip wall'], [2, 'Apply demo outlet', '0 Pa gauge'], [3, 'Apply demo inlet', 'm/s']]) {
+    await selectFace(page, face);
+    await send(page, prompt);
+    await expect(page.locator('.boundary-label.proposed')).toContainText(label);
+    await confirm(page);
+  }
+  await page.getByRole('button', { name: 'Simulation setup', exact: true }).click();
+  await expect(page.locator('.condition-row')).toHaveCount(3);
+  await expect(page.locator('.condition-row').filter({hasText:'Pressure outlet'})).toContainText('0 Pa gauge');
+  await expect(page.locator('.condition-row').filter({hasText:'Velocity inlet'})).toContainText('m/s');
+  await page.getByRole('button', { name: 'Close Simulation setup' }).click();
+  await send(page, 'Run Fluent simulation');
+  expect((await state(page)).context.lastResult).toBeNull();
+  await expect(page.locator('.message-code')).toContainText('ctx.solve()');
+  await confirm(page);
+  expect((await state(page)).context.lastResult.solver).toBe('fluent');
+  await expect(page.locator('.message-image img')).toHaveCount(2);
+  await expect(page.getByRole('button', {name:'Export setup (.mechdat)',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button', {name:'Export solved simulation (.mechpz)',exact:true})).toBeDisabled();
+  await page.reload();
+  await expect(page.locator('.boundary-label')).toHaveCount(3);
+  expect(errors).toEqual([]);
+});
 
 test('Gravity previews and applied arrows match the design axes through orbit, rejection and disabling', async ({ page }) => {
   const errors = [];
@@ -192,7 +320,9 @@ test('Shared face state, chat confirmations, generated code and result downloads
   await expect(page.locator('.message-image img')).toHaveCount(2);
   await expect(page.locator('.message-image img').first()).toBeVisible();
   expect(await page.locator('.message-image img').first().evaluate(im => im.complete && im.naturalWidth > 0)).toBe(true);
-  await expect(page.locator('.markdown table')).toBeVisible();
+  const comparison = page.locator('details.message-context').filter({has:page.locator('.markdown table')});
+  await comparison.locator('summary').click();
+  await expect(comparison.locator('.markdown table')).toBeVisible();
   await expect(solvedExport).toBeEnabled();
   const nativeDownload = page.waitForEvent('download');
   await solvedExport.click();

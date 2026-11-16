@@ -1,0 +1,59 @@
+{
+  "solver": "fluent",
+  "status": "succeeded",
+  "converged": true,
+  "modelId": "fb06de6f1ce8e89e9836ee3d52b1691ab55f6c2c10ae8d634d14f1e88855aa64",
+  "programSHA256": "c064d2da7fac2f0fdc1b05f32f8398479698582c62d356b418625840a77a6765",
+  "mesh": {
+    "cells": 25685
+  },
+  "verifiedSolves": [
+    {
+      "cells": 25685,
+      "iterations": 929,
+      "massBalanceSatisfied": true,
+      "relativeMassImbalance": 1.7737082582379956e-07,
+      "residualsSatisfied": true,
+      "solver": "fluent",
+      "status": "Done"
+    }
+  ],
+  "metrics": {
+    "relativeMassImbalance": {
+      "unit": null,
+      "value": 1.7737082582379956e-07
+    },
+    "residualHistoryRows": {
+      "unit": null,
+      "value": 929
+    }
+  },
+  "results": {
+    "pressure": {
+      "location": "boundary surfaces",
+      "maximum": 4633.86767578125,
+      "minimum": -1746.5374755859375,
+      "unit": "Pa gauge"
+    },
+    "velocity-magnitude": {
+      "location": "boundary surfaces",
+      "maximum": 3.045135736465454,
+      "minimum": 0.0,
+      "unit": "m/s"
+    }
+  },
+  "limitations": [
+    "Agent-authored meshing, physics, materials and conditions; no fixed CFD setup template.",
+    "Checked steady-flow solving in one fluid cell zone, 32000 cells, 2000 total requested iterations, one CPU; no automatic FSI.",
+    "Geometric correspondence uses finite sampling; convergence is not mesh independence or physical validation."
+  ],
+  "nativePostprocessing": {
+    "renderer": "fluent-post MCP",
+    "scope": "all verified CAD boundary surfaces, not internal flow slices",
+    "solverRerun": false,
+    "status": "succeeded"
+  },
+  "evidenceKind": "Excerpt of an existing real solve; read back on 2026-11-15, not a new solve.",
+  "runDateUTC": "2026-11-12",
+  "originalReportSHA256": "16ef55dde9c7ed56411372dee3a77c105b175f65309b80eafe72be5177265274"
+}

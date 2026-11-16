@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildFaceMap, meshOccurrences } from '../src/cad/faceMap.js';
 import { validateAnnotations, validateProjectAnnotations } from '../src/comments/exportImport.js';
-import { validateConditions } from '../src/boundaries/conditions.js';
+import { validateConditions, conditionSummary } from '../src/boundaries/conditions.js';
 import { createBoundaryVisual, faceSamples } from '../src/viewer/boundaryVisuals.js';
 import * as THREE from 'three';
 import { pickFrame } from '../src/studio/visual.js';
@@ -39,6 +39,51 @@ function meshFace(mesh, first = 0, last = mesh.geometry.index.count / 3 - 1) {
   }
   return { mesh, first, last, box };
 }
+
+test('Fluent conditions keep SI units and render inlet/outlet/wall/symmetry glyphs', () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+  const face = meshFace(mesh, 0, 1);
+  for (const [type, values] of [['velocity_inlet', { x: 1, y: 0, z: 0 }], ['pressure_outlet', { gauge_pressure: 0 }], ['wall', {}], ['symmetry', {}]]) {
+    const row = { id: type, modelId: 'cad', faceKey: 'face', type, values, createdAt: '2026-11-11', updatedAt: '2026-11-11' };
+    assert.deepEqual(validateConditions([row], 'cad')[0].values, values);
+    const visual = createBoundaryVisual(row, face, 20, { preview: true });
+    assert.equal(visual.userData.preview, true);
+    assert.ok(visual.children.length > 1);
+    assert.doesNotMatch(conditionSummary(row), /undefined|NaN/);
+    if (type === 'velocity_inlet') assert.match(conditionSummary(row), /m\/s/);
+    if (type === 'pressure_outlet') {
+      assert.equal(conditionSummary(row), '0 Pa gauge');
+      const arrow = visual.children.find(c => c.type === 'ArrowHelper');
+      const direction = new THREE.Vector3(0, 1, 0).applyQuaternion(arrow.quaternion);
+      assert.ok(direction.dot(faceSamples(face)[0].normal) > .999);
+    }
+  }
+});
+
+test('Thermal symbols and labels preserve units, previews, flux sign and unknown exchange direction', () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10));
+  const face = meshFace(mesh, 0, 1);
+  const kinds = [['temperature', {temperature:80}], ['heat_flux', {magnitude:500}], ['heat_flux', {magnitude:-500}], ['heat_flux', {magnitude:0}], ['convection', {coefficient:15,ambient_temperature:25}], ['radiation', {emissivity:.8,ambient_temperature:20}], ['adiabatic', {}]];
+  for (const [type, values] of kinds) {
+    const row = { id:type,modelId:'cad',faceKey:'face',type,values,createdAt:'2026-11-11',updatedAt:'2026-11-11' };
+    assert.deepEqual(validateConditions([row],'cad')[0].values, values);
+    const visual = createBoundaryVisual(row,face,20,{preview:true});
+    assert.ok(visual.children.length > 1);
+    assert.equal(visual.userData.preview,true);
+    assert.doesNotMatch(conditionSummary(row),/undefined|NaN/);
+    const arrows = visual.children.filter(c => c.type === 'ArrowHelper');
+    if (type === 'heat_flux' && values.magnitude !== 0) {
+      const direction = new THREE.Vector3(0,1,0).applyQuaternion(arrows[0].quaternion);
+      assert.ok(direction.dot(faceSamples(face)[0].normal) * Math.sign(values.magnitude) < -.999);
+    } else assert.equal(arrows.length,0);
+    for (const child of visual.children) {
+      if (child.geometry?.attributes.position) assert.ok([...child.geometry.attributes.position.array].every(Number.isFinite));
+    }
+  }
+  for (const [type,values] of [['temperature',{temperature:-274}],['radiation',{emissivity:2,ambient_temperature:20}],['convection',{coefficient:0,ambient_temperature:20}]]) {
+    assert.throws(() => validateConditions([{id:type,modelId:'cad',faceKey:'face',type,values,createdAt:'2026-11-11',updatedAt:'2026-11-11'}],'cad'));
+  }
+});
 
 test('face focus turns to the outside of a hidden back face and handles top faces without a pole singularity', () => {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(10, 20, 30), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));

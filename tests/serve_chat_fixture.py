@@ -21,10 +21,38 @@ class ScriptedTestModel:
         text = data['conversation'][-1]['content'].lower()
         if data['toolObservationsThisTurn']:
             last = data['toolObservationsThisTurn'][-1]
+            if last.get('tool') == 'suggest_fluid_domain' and last['ok']:
+                return json.dumps({'reply':'Use this suggested geometric gap?','action':{'tool':'set_fluid_domain','arguments':{
+                    'model_id':c['modelId'],'revision':c['revision'],'kind':'box','cad_role':'obstacle',
+                    'parameters':last['result']['parameters'],'description':'User-selected suggested geometric gap; not a CFD sizing guarantee.'}}})
             return json.dumps({'reply': 'Done. The setup is saved.' if last['ok'] else 'More information is needed: ' + last['error'], 'action': None})
         args = {'model_id': c['modelId'], 'revision': c['revision']}
         name = None
-        if text.startswith('inspect screenshot'):
+        if text.startswith('add a box enclosure around'):
+            return json.dumps({'reply':'Choose the enclosure sizing.','details':'A positive gap prevents contact but does not prove CFD domain-size independence.',
+                              'choices':[{'label':'Suggest clearance','value':'Suggest a positive geometric clearance on all sides.'},
+                                         {'label':'Enter dimensions','value':'I will enter custom box bounds.'}]})
+        elif text.startswith('suggest a positive geometric clearance'):
+            name = 'suggest_fluid_domain'; args.update(fixed_axes=[])
+        elif text.startswith('create the saved fluid domain geometry'):
+            name = 'create_fluid_domain'
+        elif text.strip() in ('mechanical', 'heat transfer', 'fluid dynamics'):
+            name = 'set_simulation_intent'; args.update(simulation_type={'mechanical':'mechanical','heat transfer':'heat_transfer','fluid dynamics':'fluid'}[text.strip()])
+        elif text.startswith('define demo pipe domain'):
+            name = 'set_fluid_domain'; args.update(kind='cylinder',cad_role='reference',
+                parameters=dict(origin_x=0,origin_y=0,origin_z=0,axis_x=0,axis_y=0,axis_z=1,radius=10,length=50),
+                description='Synthetic user-defined cylindrical internal flow domain; preparation required.')
+        elif text.startswith('apply demo temperature'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='temperature',values={'temperature':80})
+        elif text.startswith('apply demo heat flux'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='heat_flux',values={'magnitude':500})
+        elif text.startswith('apply demo convection'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='convection',values={'coefficient':15,'ambient_temperature':25})
+        elif text.startswith('apply demo radiation'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='radiation',values={'emissivity':.8,'ambient_temperature':20})
+        elif text.startswith('apply demo insulation'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='adiabatic',values={})
+        elif text.startswith('inspect screenshot'):
             frame = c['visualAssistance']['frame']
             return json.dumps({'reply': 'I received the viewport screenshot: ' + str(frame['width']) + ' pixels wide. No click was needed.', 'action': None})
         if text.startswith('pick screenshot center'):
@@ -53,6 +81,19 @@ class ScriptedTestModel:
                                                  kind='force', values={'x': 0, 'y': 0, 'z': 200})
         elif text.startswith('use structural steel'):
             name = 'set_analysis'; args.update(material='Structural Steel', small_deformation=True)
+        elif text.startswith('configure demo fluid'):
+            name = 'set_fluent_analysis'; args.update(domain='fluid-volume', regime='steady-laminar-incompressible',
+                density=1, dynamic_viscosity=0.001, operating_pressure=101325, mesh_size_mm=3,
+                max_iterations=100, residual_tolerance=1e-5, mass_imbalance_tolerance=0.01)
+        elif text.startswith('apply demo inlet'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='velocity_inlet',values=dict(x=0,y=0,z=0.01))
+        elif text.startswith('apply demo outlet'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='pressure_outlet',values={'gauge_pressure':0})
+        elif text.startswith('apply demo wall'):
+            name = 'apply_condition'; args.update(face_key=c['selectedFace']['key'],kind='wall',values={})
+        elif text.startswith('run fluent simulation'):
+            name = 'run_fluent_code'; args.update(title='SYNTHETIC Fluent UI fixture',objective='Browser presentation only; no real CFD result.',
+                                                  code='solver = ctx.generate_mesh()\nctx.solve()')
         elif text.startswith('run simulation'):
             name = 'run_simulation'
         if name:
@@ -96,5 +137,14 @@ def synthetic_code(workspace, model_id, program, selected_face):
     result['report']['gravityLoads'] = [dict(row, source='mechanical') for row in preview_gravity(program['code'])]
     return result
 
-service = ChatWorkspace(workspace, runner=synthetic_solver, code_runner=synthetic_code)
+def synthetic_fluent(workspace, model_id, program, selected_face):
+    result = synthetic_code(workspace, model_id, program, selected_face)
+    result.pop('mechanicalFile', None); result.pop('mechanicalArchive', None)
+    result['report'].update(solver='fluent',converged=True,verifiedSolves=[{'status':'Done'}],
+                            tables={'SYNTHETIC UI CFD CHECK': [{'fixture':'Not a real Fluent result'}]})
+    result['report'].pop('nativeArchive', None)
+    return result
+
+
+service = ChatWorkspace(workspace, runner=synthetic_solver, code_runner=synthetic_code, fluent_runner=synthetic_fluent)
 uvicorn.run(build_server(workspace, ScriptedTestModel(), service, studio='--studio' in sys.argv), host='127.0.0.1', port=7862)

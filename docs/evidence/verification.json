@@ -1,0 +1,95 @@
+{
+  "packageDate": "2026-11-15",
+  "checksCompletedAtUTC": "2026-11-16T01:50:03.111118+00:00",
+  "localEnvironment": {
+    "os": "macOS 26.5.2 arm64",
+    "python": "3.12.5",
+    "node": "24.12.0",
+    "npm": "11.6.2",
+    "resolvedPythonPackages": "studio-python-freeze.txt",
+    "note": "Fresh review dependencies satisfy repository ranges; installed live versions can differ."
+  },
+  "checks": [
+    {
+      "command": "npm test",
+      "status": "passed",
+      "tests": 17,
+      "logSHA256": "550de0a0129922b8c8b75e22d24c465a5c566fdc2edb7b7145cab524c4326f49"
+    },
+    {
+      "command": ".venv-review/bin/python -m unittest discover -s tests/python -v",
+      "status": "passed",
+      "tests": 196,
+      "seconds": 17.663,
+      "logSHA256": "95ce2e483b505d6dd85e3d1b47637c6cfc6194480de9b0ae39b49a3762b9f218"
+    },
+    {
+      "command": "GRADIO_TEST_PYTHON=.venv-review/bin/python npx playwright test --config playwright.studio.config.js",
+      "status": "passed",
+      "tests": 9,
+      "reportedDuration": "1.3m",
+      "agent": "scripted fixture",
+      "solver": "synthetic outputs",
+      "domainConstruction": "real OpenCascade",
+      "logSHA256": "40cd396e71d1c4e487ab3900b61f1208e05818de904124dbb736e87993b6a16a"
+    },
+    {
+      "command": "npm run build:gradio",
+      "status": "passed",
+      "logSHA256": "66745d9334bfe8cb7987161ee6f83cc940c240286c6362fd87dd6d55bce3d29e"
+    },
+    {
+      "command": "npm run build:studio",
+      "status": "passed",
+      "logSHA256": "05800f06c3dc9e0ce159041d8eb3d0192b9f7088534fda0f6fbac37889c7b594"
+    },
+    {
+      "command": "Isolated Windows post environment: python -m pytest <temporary copy of packaged adapter tests> -q",
+      "status": "passed",
+      "tests": 6,
+      "seconds": 3.85,
+      "solverLaunches": "mocked",
+      "logSHA256": "4267b91457bc03073f3b88bab3010affbb1d8e0605bfc462b1e080dbaa97d940"
+    },
+    {
+      "check": "Rebuilt frontend vs live assets",
+      "status": "passed",
+      "files": 7,
+      "method": "SHA-256"
+    },
+    {
+      "check": "Authenticated live browser import",
+      "status": "passed",
+      "model": "examples/simple-bracket/simple-bracket.step",
+      "faces": 9,
+      "chatMessageSent": false,
+      "solverLaunched": false
+    }
+  ],
+  "historicalEvidence": [
+    {
+      "solver": "Mechanical",
+      "runDate": "2026-11-05",
+      "record": "../../examples/simple-bracket/verified-demo.json",
+      "newRunDuringPackaging": false
+    },
+    {
+      "solver": "Fluent",
+      "runDateUTC": "2026-11-12",
+      "retrievedDate": "2026-11-15",
+      "record": "fluent-verified-run.json",
+      "newRunDuringPackaging": false
+    }
+  ],
+  "artifactSHA256": {
+    "live-studio.png": "c02eaf57a9764d2d18faf182c8415cc90b1cddef3c036c5ac204b00480945761",
+    "native-pressure.png": "280baad0fbe150046e8bc38cc8e998d1f13c03c3fb532f878c32595fe227b868",
+    "native-velocity.png": "d22e0a4abbf038ff74cbabf87f9dd0bd785d34c2080431aec18e617cbbab44b7",
+    "fluent-verified-run.json": "a95e5b4db6a378c5bc9277ad82cf1e4502a00a107730947b5b609266b855cbed"
+  },
+  "limitations": [
+    "Software checks do not establish engineering accuracy.",
+    "Historical Fluent result was host-controlled, not attached as a new live chat result.",
+    "Thermal setup is tested; no verified thermal solve is included."
+  ]
+}

@@ -85,10 +85,16 @@ def main():
             version = importlib.metadata.version("ansys-mechanical-core")
         except importlib.metadata.PackageNotFoundError:
             version = None
+        try:
+            fluent_version = importlib.metadata.version('ansys-fluent-core')
+        except importlib.metadata.PackageNotFoundError:
+            fluent_version = None
         print(json.dumps({"service": "project2-mechanical-ssh", "protocolVersion": 1,
                           "python": sys.executable, "platform": sys.platform,
                           "pyMechanicalVersion": version, "requiredMechanicalVersion": 261,
-                          "licenseVerified": False}))
+                          "pyFluentVersion": fluent_version, "fluentWorkerProtocol": 2,
+                          "requiredFluentVersion": 261, "licenseVerified": None,
+                          "licenseCheckPerformed": False, "licenseStatus": "not_checked"}))
         return 0
     if not args.job_id or not re.fullmatch(r"[0-9a-f]{32}", args.job_id):
         parser.error("A valid --job-id is required.")

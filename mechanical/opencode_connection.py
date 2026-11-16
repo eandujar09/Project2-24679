@@ -191,11 +191,27 @@ class OpenCodeConnection:
         return self.api.read_file(f"worker-data/{job_id}/simulation.zip", Path(directory) / "simulation.zip")
 
     def status(self, record):
+        missing_shell = False
         if record.get("shellId"):
-            shell = self.api.shell_info(record["shellId"])
-            if shell["status"] == "running":
-                return {"jobId": record["jobId"], "status": "running"}
-            if shell["status"] != "exited" or shell.get("exit") != 0:
-                return {"jobId": record["jobId"], "status": "interrupted", "shellStatus": shell["status"],
-                        "output": self.api.shell_output(record["shellId"])[-4000:]}
-        return json.loads(self.api.read_file(f"worker-data/{record['jobId']}/status.json", max_bytes=4 * 1024 * 1024))
+            try:
+                shell = self.api.shell_info(record["shellId"])
+            except ValueError as exc:
+                # Shell handles can disappear while the detached worker remains
+                # alive. A missing handle is NOT proof that no job was submitted.
+                expected = f"OpenCode API /api/shell/{record['shellId']} returned HTTP 404."
+                if str(exc) != expected:
+                    raise
+                missing_shell = True
+            else:
+                if shell["status"] == "running":
+                    return {"jobId": record["jobId"], "status": "running"}
+                if shell["status"] != "exited" or shell.get("exit") != 0:
+                    return {"jobId": record["jobId"], "status": "interrupted", "shellStatus": shell["status"],
+                            "output": self.api.shell_output(record["shellId"])[-4000:]}
+        status = json.loads(self.api.read_file(f"worker-data/{record['jobId']}/status.json", max_bytes=4 * 1024 * 1024))
+        if any(not record.get(key) or status.get(key) != record[key]
+               for key in ('jobId','modelId','submissionSHA256')):
+            raise ValueError('The worker status does not match the original job identity; do not resubmit.')
+        if missing_shell:
+            status['shellHandleMissing'] = True
+        return status

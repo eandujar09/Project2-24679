@@ -6,9 +6,62 @@ from mechanical.opencode_connection import OpenCodeAPI
 from .chat_tools import apply_tool, tool_schemas
 
 from mechanical.program import PROGRAM_GUIDE
+from fluent.program import PROGRAM_GUIDE as FLUENT_GUIDE
 from .chat_confirmations import GUARDED_TOOLS, propose, consume_confirmation
+from .chat_presentation import Choice, DOMAIN_CHOICES, compact
 
 INSTRUCTIONS = """You are an engineering coding agent for a CAD workspace.
+USER PRESENTATION: Keep reply to one short question or 1–2 short sentences (normally <= 240 characters).
+Use choices=[{label,value},...] for selectable answers whenever possible; 2–6 clear options with units.
+They are user selections, not tool calls. Never use a generic option 'Confirm'/'yes': approval belongs
+to the exact confirmation card. Put optional explanation/caveats/diagnostics in details (collapsed
+'More context'), not reply. Do not repeat questions or narrate every tool. One question per step.
+Free text remains available for dimensions and corrections. If the user delegates geometric clearance
+('expand until it does not touch'), call suggest_fluid_domain, preserve explicitly fixed axes/bounds,
+and propose the numerical gap for review instead of repeatedly asking for a number. Label this as
+geometric non-contact, not proof of sufficient CFD-domain size. The operator has confirmed that
+Mechanical and Fluent licenses are working. Licensing is NOT a current setup blocker. Do not repeat
+historical license warnings or ask the user to fix licensing. Revisit licensing only if a NEW actual
+solver execution reports an explicit license failure. A historical failed job remains failed; this
+operator confirmation does not turn old runs into successful solves or prove end-to-end validation.
+UPLOAD ONBOARDING: Every newly uploaded CAD starts by asking whether this is a mechanical,
+heat transfer, or fluid dynamics simulation. Read context.simulationIntent and awaitingSimulationChoice.
+When awaitingSimulationChoice is true, obtain the current user's choice even for a saved model.
+When the user answers,
+use set_simulation_intent to record their choice (heat transfer -> heat_transfer); this informational
+choice does not itself run or apply physics. Do not infer it from shape or a face click. If still
+unknown, ask the three-way question before proposing solver setup. Respect changes of intent.
+For fluid dynamics, next ask whether the CAD already includes the FLUID DOMAIN or one needs to
+be added. Let the USER define it: box enclosure, cylindrical/pipe domain, or any other standard
+technique (custom). Ask whether CAD is fluid volume, a solid obstacle, or reference geometry.
+Use set_fluid_domain to record a complete user-defined description. A box needs min/max XYZ mm;
+a pipe/cylinder needs the start-center XYZ mm, direction vector, INNER FLUID radius and length mm.
+Ask for missing extents, or offer a clearance suggestion when the user delegates that choice.
+Other methods (external enclosure, annulus,
+symmetry/wedge, extracted internal passage, etc.) use custom plus the user's description/parameters.
+set_fluid_domain saves dimensions; create_fluid_domain actually builds a box/cylinder and subtracts
+the source CAD for obstacle role, or makes an empty fluid volume for explicit reference role.
+After saving agreed box/cylinder dimensions, offer to CREATE the domain; do not request manual STEP
+preparation for supported construction. Construction validates containment, positive obstacle clearance,
+watertightness, one connected region and exported volume. If it fails, propose corrected bounds.
+The generated model has NEW face keys; use fresh context and never copy old conditions onto them.
+Original geometry/annotations remain saved. Ask for inlet/outlet/walls on the resulting fluid model.
+Custom capping, annular/wedge/extracted internal passages still require separately prepared CAD.
+Merely including a bounding solid does not establish a valid subtracted fluid volume.
+
+HEAT TRANSFER: use the generated PyMechanical path for a suitable steady/transient thermal analysis,
+not the steel/static structural preset. Confirm material conductivity and other required properties,
+steady versus transient, initial conditions/time stepping if needed, and meaningful outputs.
+Thermal face annotations: temperature {temperature} °C; heat_flux {magnitude} W/m² (positive inward,
+negative outward, zero allowed); convection {coefficient} W/(m² K), {ambient_temperature} °C;
+radiation {emissivity} 0..1, {ambient_temperature} °C; adiabatic {} (zero normal flux).
+Use apply_condition for preview/confirmation, including temperature, flux, convection, radiation and
+insulation symbols. Temperatures cannot be below -273.15 °C. Do not interpret insulation as a fixed
+structural support. Convection and radiation graphics denote exchange, not a known net direction.
+Saved thermal annotations are NOT automatically applied by a template; your generated thermal code
+must explicitly implement them with equivalent units and ctx.selection for the original faces. No
+thermal CFD/CHT support has been added to the currently isothermal Fluent worker.
+
 Be deliberately cautious about engineering interpretation. Separate observed geometry from inference.
 Say "I think this may be... because..." when identifying a likely feature, and state what information
 would distinguish alternatives. Do not assert the physically correct loading location from shape alone.
@@ -18,11 +71,43 @@ Never hedge a directly measured solver value as though it were guessed; qualify 
 
 The left viewer contains the user's uploaded STEP geometry, with exact original face keys. The right
 panel is your conversation. The user wants real model-authored PyMechanical code, not a fixed wizard.
-Use run_mechanical_code as the DEFAULT execution path for inspections, analyses and mesh studies.
+For structural physics use run_mechanical_code; for supported fluid physics use run_fluent_code.
+Determine the intended physics first, and never route CFD to Mechanical. The Fluent guide below
+defines the supported fluid-domain and physics contract. Use generated code, not the legacy preset.
 You write Python for the current geometry and requested physics, inspect tool output, and revise it.
 Do not use run_simulation (the legacy steel/single-solid preset) unless the user explicitly asks for that preset.
 There is no single-solid/steel/static restriction on generated Python. Imported geometry, available
 materials, solver licenses and valid engineering setup still determine which analyses can succeed.
+Fluent follows Mechanical's agent-authored worker pattern: write mesh controls, physics,
+materials, conditions and initialization yourself. The fixed Fluent ctx.mesh/ctx.configure
+template is removed. Use checked ctx.generate_mesh/selection/solve helpers, inspect actual
+APIs, and preserve optional saved Fluent assumptions/conditions. Neither solver requires
+a setup preset merely to execute inspection or an explicitly approved authored analysis.
+The Studio session DOES expose Fluent MCP discovery and validation: find_fluent_api,
+get_fluent_api_help, validate_fluent_api_code. Use check_fluent_worker to check the
+configured worker packages/protocol without launching Fluent. Use discovery/help before
+authoring unfamiliar APIs, then validate API snippets and the full proposed program with
+validate_fluent_program before offering execution. The upstream MCP sandbox knows solver
+and session, NOT Studio's ctx/tasks/meshing/workflow; bind local task variables from
+session.workflow when validating PyFluent snippets. Do not strip wrapper calls and claim
+the full program was MCP-validated: full-program validation is a separate local contract
+check. parse_ok and worker compatibility are NOT live API or physics verification.
+Do not claim the tools are unavailable without trying the exposed tools. If a tool
+actually fails, report its current failure, never infer a licensing problem or bypass
+execution confirmation. These read-only tools never authorize submission or solving.
+For a Fluent request use review_fluent_workflow once to see missing inputs and the
+known-working authored native-STEP reference. Reuse already saved, explicit conditions;
+ask only for missing or changed intent. Do not repeat discovery/help/worker checks
+with identical arguments after a successful answer. Read their actual tool observations.
+Prefer native STEP with OneZonePer=face in BOTH import and surface generation,
+preserving curvature; this resolved STL remeshing damage on the saved-water model.
+The reference is not a universal physics or numerics preset. Propose numerical
+stabilization in the exact code; never silently change saved assumptions or tolerances.
+When a verified Fluent solve succeeds, native MCP postprocessing may add Fluent-rendered
+boundary contours automatically. A postprocessing failure does not invalidate convergence
+and is not a reason to rerun the solve. ctx.capture plots are Matplotlib extractions,
+not Fluent screenshots; label them accordingly. No-slip wall velocity is zero, not
+an internal flow visualization. Large diagnostics are summarized; full artifacts remain saved.
 The context.analysis and legacyPreset fields only describe the optional legacy preset; they do not
 restrict your generated code. Ask about material, physics, loads/supports, units and intended outputs
 when unknown. Do not silently assume steel or static analysis. A request to inspect geometry needs no
@@ -44,6 +129,11 @@ Show a concise plan and assumptions in reply when proposing code. The host retai
 logs, tables, images and project for every attempt. You may run up to
 three code attempts per user turn; revised code must address the actual error or requested refinement.
 If transport reports an uncertain job, use recover_mechanical_run to check/retrieve that SAME job.
+Attempt status not_submitted (retryable=true) means the host never invoked the solver submission.
+It needs no job recovery or host reset: the same code can be retried after the preflight issue is
+fixed and the user authorizes retry. Do not alter source merely to bypass deduplication. Stop and
+report a missing worker/dependency preflight failure rather than repeatedly retrying unchanged setup.
+Unknown execution status remains recovery-only; missing a record alone does not prove non-execution.
 If still running, explain that and wait for the user to check again. Never automatically resubmit code.
 A completed Python script is not proof of a solved analysis: inspect verifiedSolves and solver messages.
 
@@ -57,11 +147,12 @@ error is useful evidence: inspect it and correct your script. Ask when engineeri
 After execution summarize measured values, comparison tables and uncertainty. The host embeds actual
 plots and downloads; never invent image paths. Prefer short useful questions over a long questionnaire.
 
-Return ONLY JSON: {"reply": "conversational markdown", "action": null OR
-{"tool": "one of the supplied names", "arguments": {...}}, "awaiting_selection": false}.
+Return ONLY JSON: {"reply":"short question or summary", "details":null OR "optional extra context",
+"choices":[{"label":"visible option","value":"user answer"}], "multiple":false,
+"action":null OR {"tool":"one of the supplied names","arguments":{...}}, "awaiting_selection":false}.
 Only one action per response. With no action, reply must contain a question, answer, or result summary.
 A reply proposing an action must not claim it already succeeded.
-""" + '\n' + PROGRAM_GUIDE
+""" + '\n' + PROGRAM_GUIDE + '\n' + FLUENT_GUIDE
 
 
 GUIDED_WORKFLOW = """CONFIRMATION-FIRST WORKFLOW:
@@ -133,6 +224,9 @@ class Decision(BaseModel):
     reply: str = Field(max_length=20000)
     action: ToolProposal | None = None
     awaiting_selection: bool = False
+    details: str | None = Field(default=None,max_length=20000)
+    choices: list[Choice] = Field(default_factory=list,max_length=8)
+    multiple: bool = False
 
 class OpenCodeChatModel:
     def __init__(self):
@@ -189,10 +283,12 @@ class ChatAgent:
             with self.service.lock:
                 session.busy = True
                 session.awaiting_selection = False
+                session.question = None
             self.service.add_message(sid, 'user', message.strip()[:8000])
             approved = consume_confirmation(self.service, sid, message)
             yield 'Thinking…'
             observations = []
+            inspection_cache = {}
             code_attempts = 0
             model = self.model or OpenCodeChatModel()
             if session.visual_enabled and session.model_id and approved is None:
@@ -206,10 +302,15 @@ class ChatAgent:
             for _ in range(24 if session.interaction_mode == 'autonomous' else 10):
                 context = self.service.context(sid)
                 with self.service.lock:
-                    conversation = [m for m in session.messages if isinstance(m['content'], str)][-30:]
+                    conversation = [{'role':m['role'],'content':m['content'],
+                                     'details':m.get('details','')[:4000]}
+                                    for m in session.messages if isinstance(m['content'],str)][-30:]
                     latest_program = next((m['content'] for m in reversed(session.messages) if isinstance(m['content'], dict) and 'code' in m['content']), None)
+                from .chat_context import bounded
+                if context.get('selectedFace'):
+                    context['selectedFace'] = bounded(context['selectedFace'], 6000)
                 prompt = instructions(session.interaction_mode) + '\n\nCAD_REQUEST_JSON\n' + json.dumps({'tools': tool_schemas(session.visual_enabled), 'context': context,
-                         'conversation': conversation, 'latestProgram': latest_program, 'toolObservationsThisTurn': observations}, ensure_ascii=False)
+                         'conversation': conversation, 'latestProgram': latest_program, 'toolObservationsThisTurn': observations[-12:]}, ensure_ascii=False)
                 execute_approved = approved is not None
                 if execute_approved:
                     decision = Decision(reply='Applying your confirmed proposal.', action=ToolProposal(**approved))
@@ -233,32 +334,58 @@ class ChatAgent:
                 if decision.action is None:
                     with self.service.lock:
                         session.awaiting_selection = decision.awaiting_selection
-                    self.service.add_message(sid, 'assistant', decision.reply or 'What would you like to do next?')
+                    reply,details = compact(decision.reply or 'What would you like to do next?',decision.details)
+                    self.service.add_message(sid,'assistant',reply,details=details,
+                        choices=[c.model_dump() for c in decision.choices] or None,multiple=decision.multiple)
                     break
                 action = decision.action
                 if action.tool in GUARDED_TOOLS and not execute_approved and session.interaction_mode == 'guided':
                     try:
-                        propose(self.service, sid, action.tool, action.arguments, decision.reply)
+                        propose(self.service,sid,action.tool,action.arguments,decision.reply,decision.details)
                     except (ValueError, OSError) as exc:
                         observations.append({'tool': action.tool, 'ok': False, 'error': str(exc)})
                         continue
                     yield 'Waiting for your confirmation'
                     break
-                if action.tool == 'run_mechanical_code':
+                if action.tool in ('run_mechanical_code', 'run_fluent_code'):
                     if code_attempts >= 3:
                         self.service.add_message(sid, 'assistant', 'I reached three code attempts for this turn. The code and logs are saved; I will stop here for review.')
                         break
                     code_attempts += 1
-                yield (decision.reply + '\n\nRunning Ansys…') if action.tool in ('run_simulation', 'run_mechanical_code', 'recover_mechanical_run') else 'Updating the model…'
+                yield ('Rendering native Fluent images…' if action.tool == 'render_fluent_results' else
+                       'Checking Fluent setup…' if action.tool in ('review_fluent_workflow','check_fluent_worker','find_fluent_api','get_fluent_api_help','validate_fluent_program','validate_fluent_api_code') else
+                       'Creating fluid geometry…' if action.tool == 'create_fluid_domain' else
+                       'Running Ansys…' if action.tool in ('run_simulation', 'run_mechanical_code', 'recover_mechanical_run', 'run_fluent_code', 'recover_fluent_run') else 'Updating the model…')
                 try:
-                    result = apply_tool(self.service, sid, action.tool, action.arguments)
-                    if decision.reply and not execute_approved:
-                        self.service.add_message(sid, 'assistant', decision.reply)
+                    cacheable = action.tool in ('find_fluent_api','get_fluent_api_help','validate_fluent_api_code',
+                                                'validate_fluent_program','check_fluent_worker','review_fluent_workflow')
+                    cache_key = json.dumps([context['revision'], action.tool, action.arguments], sort_keys=True)
+                    if cacheable and cache_key in inspection_cache:
+                        result = inspection_cache[cache_key]
+                    else:
+                        result = apply_tool(self.service, sid, action.tool, action.arguments)
+                        if cacheable:
+                            inspection_cache[cache_key] = result
                     observations.append({'tool': action.tool, 'ok': True,
-                                         'result': result if action.tool in ('run_simulation', 'run_mechanical_code', 'recover_mechanical_run', 'capture_viewport', 'pick_viewport_face') else 'Applied; see the updated context resource.'})
+                                         'result': bounded(result, 14000)})
+                    if action.tool == 'set_simulation_intent' and (result.get('simulationIntent') or {}).get('type') == 'fluid' and not result.get('fluidDomain'):
+                        from .fluid_domain import DOMAIN_QUESTION
+                        self.service.add_message(sid,'assistant','Which fluid domain do you need?',details=DOMAIN_QUESTION,
+                                                 choices=DOMAIN_CHOICES,scope='model')
+                        break
+                    if action.tool == 'set_fluid_domain' and session.interaction_mode == 'guided':
+                        domain = result.get('fluidDomain') or {}
+                        if domain.get('kind') in ('box','cylinder') and domain.get('cadRole') in ('obstacle','reference'):
+                            from .fluid_domain import domain_summary
+                            self.service.add_message(sid,'assistant','Create this fluid volume?',details=domain_summary(domain),choices=[
+                                {'label':'Create fluid geometry','value':'Create the saved fluid domain geometry now.'},
+                                {'label':'Change dimensions','value':'I want to change the saved domain dimensions.'}])
+                            break
+                    if action.tool == 'create_fluid_domain' and result.get('created'):
+                        break
                     if action.tool == 'pick_viewport_face' and result.get('faceKey'):
                         self.service.add_message(sid, 'assistant', f'Pixel ({result["x"]:g}, {result["y"]:g}) resolved to **Face {result["faceIndex"]}**, now highlighted in violet.')
-                    if action.tool in ('run_simulation', 'run_mechanical_code', 'recover_mechanical_run') and result.get('artifactsReady', True) and not result.get('stillRunning') and not result.get('needsAttention') and not result.get('alreadyRun'):
+                    if action.tool in ('run_simulation', 'run_mechanical_code', 'recover_mechanical_run', 'run_fluent_code', 'recover_fluent_run', 'render_fluent_results') and result.get('artifactsReady', True) and not result.get('stillRunning') and not result.get('needsAttention') and not result.get('alreadyRun'):
                         self.add_result_messages(sid)
                 except (ValueError, OSError) as exc:
                     observations.append({'tool': action.tool, 'ok': False, 'error': str(exc)})
@@ -283,19 +410,31 @@ class ChatAgent:
             if report.get('kind') == 'generated-python':
                 solved = sum(r.get('status') == 'Done' for r in report.get('verifiedSolves', []))
                 if report['status'] == 'succeeded':
-                    summary = f'**Python completed.** {solved} verified Mechanical solve(s).'
+                    solver = 'Fluent' if report.get('solver') == 'fluent' else 'Mechanical'
+                    summary = f'**Python completed.** {solved} verified {solver} solve(s).'
+                    if solver == 'Fluent' and report.get('converged') and solved:
+                        last = next(r for r in reversed(report['verifiedSolves']) if r.get('status') == 'Done')
+                        summary = f'**Fluent converged.** {last.get("cells", "?"):,} cells; {last.get("iterations", "?")} iterations.' if isinstance(last.get('cells'),int) else '**Fluent converged.**'
+                        summary += f' {solved} verified Fluent solve(s).'
                 else:
-                    summary = '**Python attempt failed.** ' + report.get('error', 'See the saved logs.')
+                    summary = '**Python attempt failed.** Review the diagnostics.'
                 summary += ' Source, logs, and outputs are saved with this attempt.'
-                self.service.add_message(sid, 'assistant', summary)
+                self.service.add_message(sid,'assistant',summary,details=(report.get('error') if report['status'] != 'succeeded' else None))
                 for name, rows in report.get('tables', {}).items():
                     if rows:
                         fields = list(dict.fromkeys(k for row in rows for k in row))[:10]
                         escape = lambda v: str(v).replace('|', '/').replace('\n', ' ')[:120]
                         table = '**' + escape(name) + '**\n\n| ' + ' | '.join(map(escape, fields)) + ' |\n| ' + ' | '.join('---' for _ in fields) + ' |\n'
                         table += '\n'.join('| ' + ' | '.join(escape(row.get(k, '')) for k in fields) + ' |' for row in rows[:20])
-                        self.service.add_message(sid, 'assistant', table)
+                        self.service.add_message(sid,'assistant','**'+escape(name)+'**',details=table)
+                post = report.get('nativePostprocessing') or {}
+                if post.get('status') in ('failed','unknown'):
+                    self.service.add_message(sid,'assistant','The flow result is retained, but native images could not be completed. Do not rerun the solve just for pictures.',details=post.get('error'))
                 labels = {i['file']: i.get('label', i['file']) for i in report.get('images', [])}
+                if report.get('solver') == 'fluent':
+                    for filename in labels:
+                        if filename not in ('native-pressure.png','native-velocity.png'):
+                            labels[filename] = 'Extracted-data plot (Matplotlib): ' + labels[filename]
                 from pathlib import Path
                 for path in s.result.get('images', []):
                     self.service.add_message(sid, 'assistant', {'image': str(path), 'label': labels.get(Path(path).name, Path(path).stem)})

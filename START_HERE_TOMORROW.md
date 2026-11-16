@@ -1,3 +1,8 @@
+# Historical handoff
+
+This file records the original November 5 handoff. For the current version, use
+the [prototype package](PROTOTYPE_PACKAGE.md) and [demo walkthrough](docs/DEMO.md).
+
 # Resume the simulation demo
 
 Branch: `feat/simulation-studio-demo`

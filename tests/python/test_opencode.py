@@ -120,6 +120,29 @@ class APITests(unittest.TestCase):
         self.assertIn("'C:\\O''Brien\\worker\\scripts\\api-worker.py'", script)
         self.assertIn("'C:\\Program Files\\Python\\python.exe'", script)
 
+    def test_missing_shell_handle_recovers_only_the_same_worker_identity(self):
+        connection=OpenCodeConnection(r'C:\worker',r'C:\python.exe',self.config)
+        record=dict(jobId='a'*32,modelId='b'*64,submissionSHA256='c'*64,shellId='sh_lost')
+        status={**{k:record[k] for k in ('jobId','modelId','submissionSHA256')},'status':'running'}
+        with patch.object(connection.api,'shell_info',side_effect=ValueError('OpenCode API /api/shell/sh_lost returned HTTP 404.')),\
+             patch.object(connection.api,'read_file',return_value=json.dumps(status).encode()) as read,\
+             patch.object(connection.api,'start_shell') as submit:
+            recovered=connection.status(record)
+        self.assertEqual(recovered['status'],'running')
+        self.assertTrue(recovered['shellHandleMissing'])
+        self.assertIn(record['jobId'],read.call_args.args[0]);submit.assert_not_called()
+
+    def test_missing_shell_never_allows_cross_job_status_or_hides_auth_errors(self):
+        connection=OpenCodeConnection(r'C:\worker',r'C:\python.exe',self.config)
+        record=dict(jobId='a'*32,modelId='b'*64,submissionSHA256='c'*64,shellId='sh_lost')
+        with patch.object(connection.api,'shell_info',side_effect=ValueError('OpenCode API /api/shell/sh_lost returned HTTP 404.')),\
+             patch.object(connection.api,'read_file',return_value=b'{"jobId":"different","status":"succeeded"}'):
+            with self.assertRaisesRegex(ValueError,'original job identity'):connection.status(record)
+        with patch.object(connection.api,'shell_info',side_effect=ValueError('The remote portal rejected the login.')),\
+             patch.object(connection.api,'read_file') as read:
+            with self.assertRaisesRegex(ValueError,'rejected'):connection.status(record)
+            read.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

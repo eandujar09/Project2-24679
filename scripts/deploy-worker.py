@@ -16,17 +16,27 @@ from mechanical.opencode_connection import OpenCodeConnection
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--config", default=str(ROOT / ".env.local.json"))
+parser.add_argument('--solver', choices=('mechanical', 'fluent'), default='mechanical')
 args = parser.parse_args()
 for key, value in json.loads(Path(args.config).read_text()).items():
-    if key.startswith("MECHANICAL_") or key == "OPENCODE_CONFIG":
+    if key.startswith(('MECHANICAL_', 'FLUENT_')) or key == "OPENCODE_CONFIG":
         os.environ.setdefault(key, str(value))
 is_api = os.environ.get("MECHANICAL_TRANSPORT", "opencode") == "opencode"
 connection = OpenCodeConnection.from_environment() if is_api else SSHConnection.from_environment()
+if args.solver == 'fluent':
+    if is_api:
+        connection = OpenCodeConnection(os.environ.get('FLUENT_REMOTE_DIR') or connection.directory,
+                                        os.environ.get('FLUENT_REMOTE_PYTHON') or connection.python)
+    else:
+        connection = SSHConnection(connection.host, os.environ.get('FLUENT_REMOTE_DIR') or connection.directory,
+                                   os.environ.get('FLUENT_REMOTE_PYTHON') or connection.python, connection.platform)
 buffer = io.BytesIO()
 with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-    for path in sorted((ROOT / "mechanical").glob("*.py")):
-        archive.write(path, path.relative_to(ROOT).as_posix())
-    for name in ("scripts/ssh-worker.py", "scripts/api-worker.py", "requirements-mechanical.txt"):
+    for package in ('mechanical', 'fluent'):
+        for path in sorted((ROOT / package).glob('*.py')):
+            archive.write(path, path.relative_to(ROOT).as_posix())
+    for name in ("scripts/ssh-worker.py", "scripts/api-worker.py", "requirements-mechanical.txt",
+                 'requirements-fluent.txt', 'gradio_app/__init__.py', 'gradio_app/geometry.py'):
         archive.write(ROOT / name, name)
 if is_api:
     active = connection.api.json("/api/shell")["data"]

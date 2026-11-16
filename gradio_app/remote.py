@@ -13,13 +13,36 @@ from mechanical.execution import result_files
 from mechanical.ssh_connection import SSHConnection
 from mechanical.opencode_connection import OpenCodeAPI, OpenCodeConnection
 from mechanical.transfer import MAX_RESULTS, extract_results, pack_submission
-from .simulation import prepare_request, prepare_code_request
+from .simulation import prepare_request, prepare_code_request, prepare_fluent_request
 
 
 class RemoteSubmissionError(ValueError):
+    submission_state = 'unknown'
+
     def __init__(self, message, record_path):
         super().__init__(message)
         self.record_path = str(record_path)
+
+
+class PreSubmissionError(ValueError):
+    """Positive evidence that the simulation transport was never invoked."""
+    submission_state = 'not_submitted'
+
+
+LEGACY_FLUENT_PREFLIGHT_ERRORS = frozenset({
+    'Deploy the Fluent worker and install requirements-fluent.txt in the configured remote Python. A licensed Fluent 261 launch is still required.',
+    'Deploy the Fluent worker and install requirements-fluent.txt in the configured remote Python. The configured worker is missing the required PyFluent version or protocol.',
+})
+
+
+def definite_non_submission(attempt):
+    if attempt.get('submissionState') == 'not_submitted':
+        return True
+    # Narrow migration for the known old capability-check failure. Absence of a
+    # job record alone is NOT evidence that an arbitrary execution never started.
+    return (attempt.get('solver') == 'fluent' and attempt.get('status') == 'failed'
+            and not any(attempt.get(k) for k in ('recordPath','recoverable','report','result','jobId'))
+            and attempt.get('error') in LEGACY_FLUENT_PREFLIGHT_ERRORS)
 
 
 def remote_host():
@@ -31,12 +54,20 @@ def remote_host():
     return os.environ.get("MECHANICAL_SSH_HOST", "")
 
 
-def configured_connection():
+def configured_connection(solver='mechanical'):
     transport = os.environ.get("MECHANICAL_TRANSPORT", "opencode")
     if transport == "opencode":
+        if solver == 'fluent':
+            return OpenCodeConnection(os.environ.get('FLUENT_REMOTE_DIR') or os.environ.get('MECHANICAL_REMOTE_DIR', ''),
+                                      os.environ.get('FLUENT_REMOTE_PYTHON') or os.environ.get('MECHANICAL_REMOTE_PYTHON', ''))
         return OpenCodeConnection.from_environment()
     if transport != "ssh":
         raise ValueError("MECHANICAL_TRANSPORT must be opencode or ssh.")
+    if solver == 'fluent':
+        return SSHConnection(os.environ.get('MECHANICAL_SSH_HOST', ''),
+                             os.environ.get('FLUENT_REMOTE_DIR') or os.environ.get('MECHANICAL_REMOTE_DIR', ''),
+                             os.environ.get('FLUENT_REMOTE_PYTHON') or os.environ.get('MECHANICAL_REMOTE_PYTHON', ''),
+                             os.environ.get('MECHANICAL_REMOTE_PLATFORM', 'windows'))
     return SSHConnection.from_environment()
 
 
@@ -46,7 +77,7 @@ def check_connection():
     if info.get("pyMechanicalVersion") != "0.12.7":
         raise ValueError("Connected, but install requirements-mechanical.txt in the configured remote Python environment.")
     method = "the OpenCode API" if getattr(connection, "transport", "ssh") == "opencode" else "SSH"
-    return f"**Connected through {method}.** PyMechanical is installed. A real simulation verifies Mechanical 261 and its license."
+    return f"**Connected through {method}.** PyMechanical worker is available. This check verifies the connection and installed package, not a solver run."
 
 
 def receive_results(connection, action, job_id, directory, data=None, timeout_seconds=1050):
@@ -73,20 +104,53 @@ def receive_results(connection, action, job_id, directory, data=None, timeout_se
 
 
 def run_remote_project(workspace, model_id, element_size_mm=3, progress=None, connection=None):
-    request = prepare_request(workspace, model_id, element_size_mm)
+    try:
+        request = prepare_request(workspace, model_id, element_size_mm)
+    except (ValueError,OSError) as exc:
+        raise PreSubmissionError(str(exc)) from exc
     return submit_remote_request(workspace, request, progress, connection)
 
 
 def run_remote_code(workspace, model_id, program, selected_face=None, connection=None):
-    request = prepare_code_request(workspace, model_id, program, selected_face)
+    try:
+        request = prepare_code_request(workspace, model_id, program, selected_face)
+    except (ValueError,OSError) as exc:
+        raise PreSubmissionError(str(exc)) from exc
     return submit_remote_request(workspace, request, connection=connection)
 
 
-def submit_remote_request(workspace, request, progress=None, connection=None):
+def run_remote_fluent_code(workspace, model_id, program, selected_face=None, connection=None):
+    try:
+        request = prepare_fluent_request(workspace, model_id, program, selected_face)
+    except (ValueError,OSError) as exc:
+        raise PreSubmissionError(str(exc)) from exc
+    return submit_remote_request(workspace, request, connection=connection)
+
+
+def fluent_worker_compatible(info):
+    return str(info.get('pyFluentVersion','')).startswith('0.37.') and info.get('fluentWorkerProtocol') == 2
+
+
+def check_fluent_worker(connection=None):
+    connection=connection or configured_connection('fluent')
+    info=connection.check()
+    fields=('pyFluentVersion','fluentWorkerProtocol','requiredFluentVersion','licenseStatus')
+    return {'compatible':fluent_worker_compatible(info),
+            'worker':{key:info.get(key) for key in fields},
+            'required':{'pyFluentVersion':'0.37.x','fluentWorkerProtocol':2,'fluentVersion':261},
+            'solverLaunched':False,'licenseCheckPerformed':False,
+            'scope':'Worker package/protocol compatibility only; no live Fluent API or solve verification.'}
+
+
+def _prepare_submission(workspace, request, progress=None, connection=None):
+    """Everything here happens before any simulation submission is attempted."""
     model_id = request['modelId']
-    connection = connection or configured_connection()
+    connection = connection or (configured_connection('fluent') if request.get('solver') == 'fluent' else configured_connection())
     info = connection.check()
-    if info.get("pyMechanicalVersion") != "0.12.7":
+    if request.get('solver') == 'fluent':
+        if not fluent_worker_compatible(info):
+            raise ValueError('Deploy the Fluent worker and install requirements-fluent.txt in the configured remote Python. The configured worker is missing the required PyFluent version or protocol.')
+    elif info.get("pyMechanicalVersion") != "0.12.7":
         raise ValueError("The remote Python environment needs requirements-mechanical.txt installed.")
     data = pack_submission(request)
     job_id = uuid.uuid4().hex
@@ -102,13 +166,25 @@ def submit_remote_request(workspace, request, progress=None, connection=None):
                remoteDirectory=connection.directory, remotePython=connection.python, remotePlatform=connection.platform))
     if progress:
         progress(0.35, desc="Remote Ansys: importing, meshing, solving, and returning results")
+    return connection,data,job_id,directory,expected,transport
+
+
+def submit_remote_request(workspace, request, progress=None, connection=None):
+    try:
+        connection,data,job_id,directory,expected,transport = _prepare_submission(workspace,request,progress,connection)
+    except Exception as exc:
+        raise PreSubmissionError(str(exc)) from exc
+    # From this point onward, failures may involve a real remote job. Never turn
+    # them into a retryable preflight failure, including result-transfer errors.
     try:
         archive = (connection.run(data, directory / "remote-job.json") if transport == "opencode"
                    else receive_results(connection, "run", job_id, directory, data))
-    except (ValueError, OSError) as exc:
-        raise RemoteSubmissionError(str(exc), directory / 'remote-job.json') from exc
-    report = extract_results(archive, directory, expected)
-    return result_files(directory, report)
+        report = extract_results(archive, directory, expected)
+        return result_files(directory, report)
+    except Exception as exc:
+        if isinstance(exc,RemoteSubmissionError):
+            raise
+        raise RemoteSubmissionError(str(exc),directory/'remote-job.json') from exc
 
 
 def recover_job(record_path, fetch=False):

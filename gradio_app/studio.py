@@ -24,9 +24,11 @@ STATIC = Path(__file__).with_name('studio_static')
 
 class Message(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    text: str = Field(min_length=1, max_length=8000)
+    text: str = Field(default='', max_length=8000)
     request_id: str = Field(min_length=1, max_length=80)
     proposal_token: str | None = None
+    choice_token: str | None = Field(default=None,max_length=64)
+    choice_ids: list[str] = Field(default_factory=list,max_length=8)
 
 
 class Selection(BaseModel):
@@ -92,12 +94,22 @@ def install_studio(server, service, chat_model=None):
                 viewer['geometryUrl'] = f'/api/studio/sessions/{sid}/geometry?model_id={s.model_id}'
             messages = []
             for message in s.messages:
+                if s.pending_confirmation and message.get('id') == s.pending_confirmation.get('messageId'):
+                    continue  # The current proposal is already rendered by its confirmation card.
                 content = message['content']
                 if isinstance(content, dict) and 'image' in content:
                     url = file_url(sid, content['image'])
                     content = {'image': url, 'label': content['label']} if url else {'unavailable': 'This historical image is no longer available.'}
                 messages.append(dict(message, content=content))
             downloads = []
+            if s.model_id:
+                project = service.workspace.get(s.model_id)
+                generation = project.get('domainGeneration')
+                if generation:
+                    for name,label in [('fluid-domain.step','Fluid geometry (.step)'),('geometry-report.json','Geometry checks (.json)')]:
+                        url = file_url(sid,Path(generation['artifactDirectory'])/name)
+                        if url:
+                            downloads.append({'url':url,'label':label,'filename':name})
             if s.result:
                 for key, label in [('mechanicalFile', 'Mechanical setup (.mechdat)'),
                                    ('mechanicalArchive', 'Solved simulation (.mechpz)'),
@@ -109,7 +121,7 @@ def install_studio(server, service, chat_model=None):
             return {'context': context, 'viewer': viewer, 'messages': messages,
                     'busy': s.busy or s.running or sid in active, 'proposalToken': proposal_token(s),
                     'status': statuses.get(sid, 'Thinking…') if sid in active else (
-                        'Exporting Mechanical setup…' if s.exporting else 'Running Ansys…' if s.running else 'Review proposal' if s.pending_confirmation else 'Ready'),
+                        'Creating fluid geometry…' if s.domain_building else 'Exporting Mechanical setup…' if s.exporting else 'Running Ansys…' if s.running else 'Review proposal' if s.pending_confirmation else 'Ready'),
                     'downloads': downloads,
                     'exportOptions': export_options(service, s),
                     'projects': [{'label': label, 'modelId': mid} for label, mid in service.workspace.projects()]}
@@ -214,7 +226,19 @@ def install_studio(server, service, chat_model=None):
 
     @api.post('/sessions/{sid}/messages', status_code=202)
     def message(sid: str, body: Message):
-        start_turn(sid, body.text, body.request_id, body.proposal_token)
+        with service.lock:
+            existing(sid)
+            if body.request_id in accepted.get(sid,set()):
+                return snapshot(sid)
+            text = body.text
+            if body.choice_token is not None or body.choice_ids:
+                if body.proposal_token is not None:
+                    raise HTTPException(422,'A selection cannot also approve a proposal.')
+                try:
+                    text = service.choice_text(sid,body.choice_token,body.choice_ids)
+                except ValueError as exc:
+                    raise HTTPException(409,str(exc)) from exc
+            start_turn(sid,text,body.request_id,body.proposal_token)
         return snapshot(sid)
 
     @api.post('/sessions/{sid}/preferences')
@@ -247,6 +271,8 @@ def install_studio(server, service, chat_model=None):
             s.provider_session = None
             s.pending_confirmation = None
             s.awaiting_selection = False
+            s.awaiting_simulation_choice = False
+            s.question = None
             s.selection_event = None
             service.add_message(sid, 'assistant', 'What would you like to test? Your model and saved simulation setup are still here.')
         return snapshot(sid)

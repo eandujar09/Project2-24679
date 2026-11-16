@@ -7,6 +7,7 @@ import { ActionButton, ChatBubble, Composer, LayoutPanelHeader, WelcomeItem } fr
 import { Viewport } from './Viewport';
 import { request } from './api';
 import { copyText, requestId } from './browser';
+import { conditionTypes, conditionSummary } from '../boundaries/conditions';
 import './studio.css';
 
 function MarkdownText({ children }) {
@@ -90,7 +91,7 @@ function App() {
   const canExport = kind => !busy && !!snapshot?.exportOptions?.[kind]?.enabled;
   const pending = c?.pendingConfirmation;
   const messages = snapshot?.messages || [];
-  const hasConversation = messages.some(m => m.role === 'user');
+  const hasConversation = !!c?.awaitingSimulationChoice || messages.some(m => m.role === 'user');
   const latestCode = [...messages].reverse().find(m => typeof m.content === 'object' && m.content.code)?.content;
   const images = messages.filter(m => typeof m.content === 'object' && m.content.image).map(m => m.content);
   const selected = c?.selectedFace;
@@ -120,6 +121,12 @@ function App() {
       if (token) body.proposal_token = token;
       if (await act('/messages', body)) setMessage('');
     } catch { /* Preserve the draft for correction/retry. */ }
+  }
+  async function chooseAnswers(token, ids) {
+    if (busy || !ids.length) return;
+    scrollPinned.current = true;
+    try { await act('/messages',{request_id:requestId(),choice_token:token,choice_ids:ids}); }
+    catch { /* Keep the selection available when a request fails. */ }
   }
   function chooseFace(key, focus = false) {
     if (!snapshotRef.current?.context.modelId) return;
@@ -184,7 +191,7 @@ function App() {
           {hasModel ? <><div className="tree-model"><Icon name="body" width={18}/><span>{c.filename}</span></div><div className="panel-section-label">CAD faces <span>{c.faceCount}</span></div><input className="search-input" aria-label="Find a face" placeholder="Find a face…" value={faceSearch} onChange={e => setFaceSearch(e.target.value)}/><div className="face-list">{c.faces.filter(f => String(f.index).includes(faceSearch)).map(f => <button className={`face-row ${selected?.key === f.key ? 'selected' : ''} ${c.highlightedFaceKeys.includes(f.key) ? 'highlighted' : ''}`} key={f.key} onClick={() => chooseFace(f.key, true)}><Icon name="plane" width={16}/><span>Face {f.index}</span><small>{f.areaMm2.toPrecision(3)} mm²</small></button>)}</div>{c.facesTruncated && <p className="muted">Showing the first 500 faces. All faces remain selectable in the viewport.</p>}</> : <EmptyPanel icon="model" text="Import a CAD model to inspect its faces." onClick={importModel} action="Import CAD"/>}
         </>}
         {panel === 'files' && <><div className="panel-section-label">Saved models <span>{snapshot?.projects.length || 0}</span></div>{snapshot?.projects.map(p => <button key={p.modelId} disabled={busy} className={`saved-model ${p.modelId === c.modelId ? 'current' : ''}`} onClick={() => act('/open', { model_id: p.modelId }).catch(() => {})}><Icon name="file" width={20}/><span>{p.label.split(' · ')[0]}<small>STEP geometry</small></span>{p.modelId === c.modelId && <Icon name="checkmark" width={16}/>}</button>)}<button className="panel-import" disabled={busy} onClick={importModel}><Icon name="plus" width={16}/>Import another model</button></>}
-        {panel === 'setup' && <><div className="panel-section-label">Saved conditions <span>{c?.boundaryConditions.length || 0}</span></div>{c?.boundaryConditions.length ? c.boundaryConditions.map(b => <button className="condition-row" key={b.id} onClick={() => chooseFace(b.faceKey, true)}><Icon name={b.type === 'fixed' ? 'fix' : 'arrowDown'} width={18}/><span><strong>{b.type === 'fixed' ? 'Fixed support' : b.type[0].toUpperCase() + b.type.slice(1)}</strong><small>Face {c.faces.find(f => f.key === b.faceKey)?.index || b.faceKey.split(':').pop()} · {b.type === 'fixed' ? 'All translations fixed' : Object.entries(b.values).map(([k, v]) => `${k.toUpperCase()} ${v}`).join(', ') + (b.type === 'force' ? ' N' : b.type === 'pressure' ? ' MPa' : ' mm')}</small></span></button>) : <EmptyPanel icon="clipboardCheckmark" text="Select a face, then describe its support or load in the conversation."/>}{c?.analysis.material && <div className="setup-details"><span>Material<strong>{c.analysis.material}</strong></span><span>Mesh setting<strong>{c.analysis.elementSizeMm} mm</strong></span></div>}<button className="panel-import" disabled={!hasModel || busy} onClick={() => send('Help me review my simulation setup. Highlight any faces we need to check and ask about missing assumptions.')}><Icon name="sparkles" width={16}/>Review setup together</button></>}
+        {panel === 'setup' && <><div className="panel-section-label">Saved conditions <span>{c?.boundaryConditions.length || 0}</span></div>{c?.boundaryConditions.length ? c.boundaryConditions.map(b => <button className="condition-row" key={b.id} onClick={() => chooseFace(b.faceKey, true)}><Icon name={b.type === 'fixed' ? 'fix' : 'arrowDown'} width={18}/><span><strong>{conditionTypes[b.type]?.label || b.type}</strong><small>Face {c.faces.find(f => f.key === b.faceKey)?.index || b.faceKey.split(':').pop()} · {conditionSummary(b)}</small></span></button>) : <EmptyPanel icon="clipboardCheckmark" text="Select a face, then describe its support or load in the conversation."/>}{c?.analysis.material && <div className="setup-details"><span>Material<strong>{c.analysis.material}</strong></span><span>Mesh setting<strong>{c.analysis.elementSizeMm} mm</strong></span></div>}<button className="panel-import" disabled={!hasModel || busy} onClick={() => send('Help me review my simulation setup. Highlight any faces we need to check and ask about missing assumptions.')}><Icon name="sparkles" width={16}/>Review setup together</button></>}
         {panel === 'code' && (latestCode ? <><div className="panel-section-label">{latestCode.title}</div><pre className="code-view"><code>{latestCode.code}</code></pre><button className="panel-import" onClick={() => copyText(latestCode.code).catch(() => setError('Could not copy the code.'))}><Icon name="clipboard" width={16}/>Copy Python</button></> : <EmptyPanel icon="code" text="The assistant’s generated Python will appear here for review before it runs."/>)}
         {panel === 'results' && <>{images.length ? <>{images.map((im, i) => <a href={im.image} target="_blank" rel="noreferrer" className="result-thumbnail" key={i}><img src={im.image} alt={im.label}/><span>{im.label}</span></a>)}{snapshot.downloads.map(d => <a key={d.url} className="download-link" href={d.url} download={d.filename}><Icon name="download" width={16}/>{d.label}</a>)}</> : <EmptyPanel icon="beaker" text="Result plots and files will appear here after an Ansys run."/>}{c?.lastResult && <div className="result-status"><span className={`status-dot ${c.lastResult.status === 'succeeded' ? '' : 'warn'}`}/>{c.lastResult.status === 'succeeded' ? 'Latest run completed' : c.lastResult.status}</div>}</>}
         {panel === 'activity' && <><div className="panel-section-label">Execution history</div>{c?.programAttempts.length ? c.programAttempts.map((a, i) => <div className="attempt" key={i}><span className={`status-dot ${a.status === 'succeeded' ? '' : 'warn'}`}/><div><strong>{a.title}</strong><small>{a.status}</small>{a.error && <p>{a.error}</p>}</div></div>) : <EmptyPanel icon="logs" text="Your simulation runs and their status will appear here."/>}{c?.lastResult?.stdout && <pre className="code-view">{c.lastResult.stdout}</pre>}</>}
@@ -210,9 +217,9 @@ function App() {
         <div className="chat-scroll" ref={scroll} onScroll={e => { const el = e.currentTarget; scrollPinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90; }}>
           <div className={`conversation ${hasConversation ? '' : 'welcome-conversation'}`}>
             {!hasConversation ? <div className="zoo-welcome px-4 py-3"><div className="assistant-emblem"><Icon name="sparkles" width={34} height={34}/></div><h2 className="text-lg font-semibold my-2">Let’s set up your simulation.</h2><p className="text-2 text-sm">{hasModel ? `${c.filename} is ready. Tell me what you want to learn about it.` : 'Bring your CAD model. We’ll work through the setup together, one decision at a time.'}</p><WelcomeItem graphic={<div className="welcome-graphic"><Icon name="model" width={32}/></div>} heading="Start with your model"><p>Import a STEP file and select the faces you want to discuss.</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic violet"><Icon name="plane" width={32}/></div>} heading="See exactly what I mean"><p>{c?.interactionMode === 'autonomous' ? 'I’ll identify faces and work through the setup, asking when essential details are missing.' : 'I’ll highlight proposed faces, explain assumptions, and ask you to confirm.'}</p></WelcomeItem><WelcomeItem graphic={<div className="welcome-graphic mint"><Icon name="beaker" width={32}/></div>} heading="From setup to results"><p>Run an Ansys analysis, compare meshes, and explore the result plots here.</p></WelcomeItem><div className="starter-prompts">{['Help me set up an analysis', 'Where should I apply a load?', 'Compare mesh sizes'].map(text => <button disabled={!hasModel || busy} key={text} onClick={() => send(text)}>{text}<Icon name="arrowShortRight" width={16}/></button>)}</div></div>
-              : messages.map((m, i) => <MessageCard key={`${c.modelId}-${i}`} message={m} onCopyError={setError}/>)}
+              : messages.map((m, i) => <MessageCard key={m.id || `${c.modelId}-${i}`} message={m} onCopyError={setError} onChoose={chooseAnswers} busy={busy} currentQuestion={c?.question}/>)}
             {busy && <div className="assistant-thinking" role="status"><span className="spinner"/>{exporting ? 'Exporting Mechanical setup…' : snapshot?.status || 'Working…'}</div>}
-            {pending && !busy && <div className="confirmation-card" data-testid="confirmation-card"><div className="confirmation-title"><Icon name="clipboardCheckmark" width={18}/>Review before continuing</div><MarkdownText>{pending.summary}</MarkdownText><div className="confirmation-actions"><button className="confirm-button" onClick={() => send('Confirm', snapshot.proposalToken)}><Icon name="checkmark" width={17}/>Confirm</button><button onClick={() => { setMessage('I want to change '); input.current?.focus(); }}>Change something</button></div></div>}
+            {pending && !busy && <div className="confirmation-card" data-testid="confirmation-card"><div className="confirmation-title"><Icon name="clipboardCheckmark" width={18}/>Review before continuing</div><MarkdownText>{pending.summary}</MarkdownText>{pending.details && <details className="message-context"><summary>More context</summary><MarkdownText>{pending.details}</MarkdownText></details>}<div className="confirmation-actions"><button className="confirm-button" onClick={() => send('Confirm', snapshot.proposalToken)}><Icon name="checkmark" width={17}/>Confirm</button><button onClick={() => { setMessage('I want to change '); input.current?.focus(); }}>Change something</button></div></div>}
             {!!snapshot?.downloads.length && <div className="chat-downloads">{snapshot.downloads.map(d => <a key={d.url} href={d.url} download={d.filename}><Icon name="download" width={16}/>{d.label}</a>)}</div>}
           </div>
         </div>
@@ -238,13 +245,27 @@ function App() {
 
 function EmptyPanel({ icon, text, onClick, action }) { return <div className="empty-panel"><Icon name={icon} width={28}/><p>{text}</p>{action && <button onClick={onClick}>{action}</button>}</div>; }
 
-function MessageCard({ message: m, onCopyError }) {
+function ChoiceCards({ question, active, busy, onChoose }) {
+  const [selected,setSelected] = useState([]);
+  const disabled = !active || busy;
+  return <form className="choice-form" onSubmit={e => {e.preventDefault(); if (!disabled && selected.length) onChoose(question.token,selected);}}>
+    <fieldset disabled={disabled}><legend>{question.multiple ? 'Select all that apply' : 'Select one'}</legend>
+      <div className="choice-grid">{question.choices.map(c => <label key={c.id} className={`choice-card ${selected.includes(c.id) ? 'selected' : ''}`}>
+        <input type={question.multiple ? 'checkbox' : 'radio'} name={'question-'+question.token} checked={selected.includes(c.id)}
+          onChange={() => setSelected(question.multiple ? selected.includes(c.id) ? selected.filter(i => i !== c.id) : [...selected,c.id] : [c.id])}/>
+        <span>{c.label}</span></label>)}</div>
+      {active && <button className="choice-submit" type="submit" disabled={disabled || !selected.length}>Continue</button>}
+    </fieldset>
+  </form>;
+}
+
+function MessageCard({ message: m, onCopyError, onChoose, busy, currentQuestion }) {
   const content = m.content;
   if (typeof content === 'object' && content.code) return <div className="message-code"><details><summary><Icon name="code" width={16}/><span>{content.title}</span><span className="code-language">Python</span><Icon name="caretDown" width={16}/></summary><pre><code>{content.code}</code></pre></details></div>;
   if (typeof content === 'object' && content.image) return <figure className="message-image"><a href={content.image} target="_blank" rel="noreferrer"><img src={content.image} alt={content.label} loading="lazy"/></a><figcaption>{content.label}</figcaption></figure>;
   if (typeof content !== 'string') return <p className="muted">{content.unavailable || 'This message is unavailable.'}</p>;
   const user = m.role === 'user';
-  return <div className={`exchange ${user ? 'user-exchange' : 'assistant-exchange'}`}><ChatBubble side={user ? 'right' : 'left'} className="py-2" avatar={<span className={user ? 'message-avatar human' : 'message-avatar assistant'}><Icon name={user ? 'person' : 'sparkles'} width={18}/></span>}><MarkdownText>{content}</MarkdownText></ChatBubble>{!user && <div className="response-toolbar"><button aria-label="Copy response" title="Copy response" onClick={() => copyText(content).catch(() => onCopyError('Could not copy the response.'))}><Icon name="clipboard" width={15}/></button></div>}</div>;
+  return <div className={`exchange ${user ? 'user-exchange' : 'assistant-exchange'}`}><ChatBubble side={user ? 'right' : 'left'} className="py-2" avatar={<span className={user ? 'message-avatar human' : 'message-avatar assistant'}><Icon name={user ? 'person' : 'sparkles'} width={18}/></span>}><MarkdownText>{content}</MarkdownText>{m.question && <ChoiceCards question={m.question} active={currentQuestion?.token === m.question.token} busy={busy} onChoose={onChoose}/>} {m.details && <details className="message-context"><summary>More context</summary><MarkdownText>{m.details}</MarkdownText></details>}</ChatBubble>{!user && <div className="response-toolbar"><button aria-label="Copy response" title="Copy response" onClick={() => copyText([content,m.details].filter(Boolean).join('\n\n')).catch(() => onCopyError('Could not copy the response.'))}><Icon name="clipboard" width={15}/></button></div>}</div>;
 }
 
 import licenseText from './vendor/zoo/LICENSE?raw';

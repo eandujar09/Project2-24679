@@ -18,6 +18,9 @@ def default_python():
 
 def prepare_request(workspace, model_id, element_size_mm=3.0):
     snapshot = workspace.solver_snapshot(model_id)
+    from fluent.contract import KINDS
+    from .thermal import KINDS as THERMAL_KINDS
+    snapshot['boundaryConditions'] = [r for r in snapshot['boundaryConditions'] if r['type'] not in KINDS | THERMAL_KINDS]
     step = workspace.root / "models" / f"{model_id}.step"
     if hashlib.sha256(step.read_bytes()).hexdigest() != snapshot["modelId"]:
         raise ValueError("The saved STEP file no longer matches its model hash.")
@@ -57,6 +60,12 @@ def run_project(workspace, model_id, python_executable, element_size_mm=3.0, tim
 def prepare_code_request(workspace, model_id, program, selected_face=None):
     from mechanical.program import validate_program
     snapshot = workspace.solver_snapshot(model_id)
+    from fluent.contract import KINDS
+    snapshot['boundaryConditions'] = [r for r in snapshot['boundaryConditions'] if r['type'] not in KINDS]
+    from .thermal import KINDS as THERMAL_KINDS
+    intent = (workspace.get(model_id).get('simulationIntent') or {}).get('type')
+    if intent in ('mechanical','heat_transfer'):
+        snapshot['boundaryConditions'] = [r for r in snapshot['boundaryConditions'] if (r['type'] in THERMAL_KINDS) == (intent == 'heat_transfer')]
     step = workspace.root / "models" / f"{model_id}.step"
     if hashlib.sha256(step.read_bytes()).hexdigest() != snapshot["modelId"]:
         raise ValueError("The saved STEP file no longer matches its model hash.")
@@ -76,5 +85,31 @@ def prepare_code_request(workspace, model_id, program, selected_face=None):
                "boundaryConditions": snapshot['boundaryConditions'], "comments": snapshot['comments'],
                "program": program,
                "settings": {"mechanicalVersion": 261, "solverCores": 1, "maxMeshEntities": 32000}}
+    validate_request(request)
+    return request
+
+
+def prepare_fluent_request(workspace, model_id, program, selected_face=None):
+    from fluent.contract import KINDS, UNITS, validate_analysis, validate_program, verify_source_faces
+    snapshot = workspace.solver_snapshot(model_id)
+    project = workspace.get(model_id)
+    domain = project.get('fluidDomain')
+    intent = project.get('simulationIntent') or {}
+    if (domain and domain.get('status') != 'ready') or (intent.get('type') == 'fluid' and not domain):
+        raise ValueError('Define and prepare the actual fluid volume first. Use create_fluid_domain for a saved box/cylinder, or upload prepared CAD for unsupported custom techniques.')
+    analysis = project.get('fluentAnalysis')
+    if analysis is not None:
+        analysis = validate_analysis(analysis)
+    step = workspace.root / 'models' / f'{model_id}.step'
+    # A closed single solid must be explicitly identified by the user as fluid volume.
+    signatures = mechanical_signatures(step, require_single_solid=True)
+    verify_source_faces(signatures, snapshot['faces'])
+    request = {'schemaVersion': 3, 'solver': 'fluent', 'executionMode':'agent-authored-v2', 'modelId': snapshot['modelId'],
+               'stepFile': str(step), 'faceMapping': snapshot['faceMapping'], 'units': UNITS,
+               'sourceFaces': snapshot['faces'], 'selectedFace': selected_face,
+               'boundaryConditions': [r for r in snapshot['boundaryConditions'] if r['type'] in KINDS],
+               'comments': snapshot['comments'], 'analysis': analysis,
+               'program': dict(program, sha256=validate_program(program)),
+               'settings': {'fluentVersion': 261, 'solverCores': 1, 'maxCells': 32000}}
     validate_request(request)
     return request

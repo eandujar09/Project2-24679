@@ -64,6 +64,7 @@ export function mount(element, props, trigger, watch) {
         const geometry = await response.json();
         if (token !== version || disposed) return;
         viewer.load(geometry.result, { faceIdentities: geometry.faceIdentities });
+        if (state.fluidDomainView) viewer.setDomainAppearance(state.domainFaceRoles);
         currentModel = state.modelId;
         loadedUrl = state.geometryUrl;
         conditionsJSON = undefined;

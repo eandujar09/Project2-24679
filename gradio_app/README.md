@@ -1,5 +1,11 @@
 # Chat-driven CAD workspace
 
+For the current package, start with [architecture and tool flow](../docs/ARCHITECTURE.md)
+and [setup](../docs/SETUP.md). This reference retains the detailed Mechanical and
+shared-workspace contracts. The deployed app also includes [Fluent](../fluent/README.md),
+[thermal/domain preparation](../HEAT_TRANSFER_AND_DOMAINS.md), official API discovery
+and optional native graphics; see the root documentation index.
+
 Start the Mac app with `../Start Mac App.command` or, from the repository root:
 
 ```sh

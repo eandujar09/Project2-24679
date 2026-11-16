@@ -34,6 +34,7 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
       if (controller.signal.aborted) return;
       viewer.current.load(geometry.result, { faceIdentities: geometry.faceIdentities });
       viewer.current.meshes.forEach(mesh => { mesh.material.color.set('#aab4bd'); mesh.material.metalness = 0.15; mesh.material.roughness = 0.65; });
+      if (state.fluidDomainView) viewer.current.setDomainAppearance(state.domainFaceRoles);
       setLoaded(state.modelId);
       ready.current = state.modelId;
     })().catch(e => { if (e.name !== 'AbortError') setError(e.message); });
@@ -87,7 +88,7 @@ export const Viewport = forwardRef(function Viewport({ state, onSelect, onUpload
   return <div className={`viewport-wrap ${drag ? 'drag-over' : ''}`} onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); if (!disabled) setDrag(true); } }}
     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }}
     onDrop={e => { e.preventDefault(); setDrag(false); if (!disabled && e.dataTransfer.files[0]) onUpload(e.dataTransfer.files[0]); }}>
-    <div ref={host} className="studio-canvas" data-testid="cad-viewport" data-model-id={loaded || ''} data-selected-face={state?.selected || ''} data-highlighted-faces={JSON.stringify(state?.highlighted || [])}/>
+    <div ref={host} className="studio-canvas" data-testid="cad-viewport" data-model-id={loaded || ''} data-fluid-domain={state?.fluidDomainView ? 'true' : 'false'} data-selected-face={state?.selected || ''} data-highlighted-faces={JSON.stringify(state?.highlighted || [])}/>
     {!!state?.gravityLoads?.length && loaded === state.modelId && <div className="gravity-status" role="status">
       {state.gravityLoads.map(load => <div key={load.id} data-gravity-state={load.state} className={load.state === 'proposed' ? 'proposed' : ''} title="Physical gravity in the design coordinate system. Applies to all bodies.">{gravitySummary(load)}</div>)}
     </div>}

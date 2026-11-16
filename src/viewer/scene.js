@@ -33,6 +33,8 @@ export class Viewer {
     this.scene.add(light);
     this.group = new THREE.Group();
     this.scene.add(this.group);
+    this.domainGroup = new THREE.Group();
+    this.scene.add(this.domainGroup);
     this.boundaryGroup = new THREE.Group();
     this.scene.add(this.boundaryGroup);
     this.boundaryLabels = document.createElement('div');
@@ -160,6 +162,37 @@ export class Viewer {
     this.bounds = new THREE.Box3().setFromObject(group);
     this.boundingSphere = this.bounds.getBoundingSphere(new THREE.Sphere());
     this.fit(true);
+    this.setDomainAppearance(null);
+  }
+
+  setDomainAppearance(roles) {
+    this.disposeGroup(this.domainGroup);
+    this.domainGroup.clear();
+    if (!roles) return;
+    this.meshes.forEach(mesh => {
+      mesh.material.color.set('#67c9df');
+      mesh.material.transparent = true;
+      mesh.material.opacity = .22;
+      mesh.material.depthWrite = false;
+    });
+    for (const [key, role] of Object.entries(roles)) {
+      const face = this.faces.get(key);
+      if (!face) continue;
+      const source = face.mesh.geometry, positions = [], p = new THREE.Vector3();
+      for (let i = face.first * 3; i < (face.last + 1) * 3; i++) {
+        p.fromBufferAttribute(source.attributes.position, source.index.getX(i));
+        positions.push(p.x,p.y,p.z);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+      geometry.computeVertexNormals();
+      if (role === 'obstacle_wall') {
+        this.domainGroup.add(new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:'#aab4bd',roughness:.65,side:THREE.DoubleSide})));
+      } else {
+        this.domainGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry),new THREE.LineBasicMaterial({color:'#67c9df',transparent:true,opacity:.65})));
+        geometry.dispose();
+      }
+    }
   }
 
   disposeGroup(group) {

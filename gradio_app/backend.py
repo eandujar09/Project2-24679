@@ -11,6 +11,8 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 from threading import RLock
 import uuid
 from urllib.parse import quote
@@ -70,7 +72,13 @@ def validate_annotations(data, model_id):
                 kind, values = item.get("type"), item.get("values", {})
                 if kind not in geometry.COLORS or not isinstance(values, dict):
                     raise ValueError("Invalid boundary-condition type or values.")
-                if kind in ("force", "displacement"):
+                from fluent.contract import KINDS, condition_values
+                from .thermal import KINDS as THERMAL_KINDS, condition_values as thermal_values
+                if kind in KINDS:
+                    values = condition_values(kind, values)
+                elif kind in THERMAL_KINDS:
+                    values = thermal_values(kind, values)
+                elif kind in ("force", "displacement"):
                     if not all(finite(values.get(axis)) for axis in "xyz"):
                         raise ValueError("X/Y/Z components must be finite numbers.")
                     values = {axis: values[axis] for axis in "xyz"}
@@ -121,6 +129,120 @@ class Workspace:
         with self.connect() as db:
             projects = [json.loads(row[0]) for row in db.execute("SELECT document FROM projects ORDER BY rowid DESC")]
         return [(f'{p["filename"]} · {p["id"][:10]}', p["id"]) for p in projects]
+
+    def set_fluent_analysis(self, model_id, analysis):
+        from fluent.contract import validate_analysis
+        analysis = validate_analysis(analysis)
+        with self.lock, self.connect() as db:
+            project = self.get(model_id)
+            project['fluentAnalysis'] = analysis
+            self._write(db, project)
+        return project
+
+    def set_simulation_intent(self, model_id, simulation_type, domain_status=None):
+        if simulation_type not in ('mechanical', 'heat_transfer', 'fluid'):
+            raise ValueError('Choose mechanical, heat transfer, or fluid dynamics.')
+        if domain_status not in (None, 'existing', 'needs_added', 'unsure'):
+            raise ValueError('Specify whether the fluid domain already exists, needs adding, or is uncertain.')
+        if simulation_type != 'fluid' and domain_status is not None:
+            raise ValueError('The domain question applies only to fluid simulations.')
+        with self.lock, self.connect() as db:
+            project = self.get(model_id)
+            previous = project.get('simulationIntent') or {}
+            if simulation_type == 'fluid' and domain_status is None and previous.get('type') == 'fluid':
+                domain_status = previous.get('domainStatus')
+            project['simulationIntent'] = {'type': simulation_type, 'domainStatus': domain_status}
+            self._write(db, project)
+        return project['simulationIntent']
+
+    def set_fluid_domain(self, model_id, kind, cad_role, parameters, description):
+        from .fluid_domain import validate_domain
+        domain = validate_domain(kind, cad_role, parameters, description)
+        with self.lock, self.connect() as db:
+            project = self.get(model_id)
+            project['fluidDomain'] = domain
+            project['simulationIntent'] = {'type':'fluid', 'domainStatus': 'existing' if kind == 'existing' else 'needs_added'}
+            self._write(db, project)
+        return domain
+
+    def suggest_fluid_domain(self, model_id, clearance_mm=None, fixed_axes=()):
+        project = self.get(model_id)
+        bounds = [f['boundsMm'] for f in project['faces']]
+        lower = [min(b[0][i] for b in bounds) for i in range(3)]
+        upper = [max(b[1][i] for b in bounds) for i in range(3)]
+        if clearance_mm is None:
+            clearance_mm = max(1.0, max(b-a for a,b in zip(lower,upper)) * 0.02)
+        if not finite(clearance_mm) or clearance_mm <= 0:
+            raise ValueError('Clearance must be positive and finite (mm).')
+        if any(a not in ('x','y','z') for a in fixed_axes):
+            raise ValueError('Fixed axes must be x, y or z.')
+        previous = project.get('fluidDomain') or {}
+        if fixed_axes and previous.get('kind') != 'box':
+            raise ValueError('Define the fixed box bounds first.')
+        p = {}
+        for i, axis in enumerate('xyz'):
+            p['min_'+axis] = previous['parameters']['min_'+axis] if axis in fixed_axes else min(lower[i]-clearance_mm, previous.get('parameters',{}).get('min_'+axis, lower[i]))
+            p['max_'+axis] = previous['parameters']['max_'+axis] if axis in fixed_axes else max(upper[i]+clearance_mm, previous.get('parameters',{}).get('max_'+axis, upper[i]))
+        return {'kind':'box', 'cadRole':'obstacle', 'parameters':p, 'clearanceMm':clearance_mm,
+                'fixedAxes':list(fixed_axes), 'requiresConfirmation':True,
+                'note':'Proposed geometric gap only; not a CFD adequacy or convergence criterion.'}
+
+    def create_fluid_domain(self, model_id, definition, timeout_seconds=120):
+        """Bounded CAD subprocess; publish a derived project only after validation."""
+        from .fluid_domain import validate_domain
+        definition = validate_domain(definition['kind'],definition['cadRole'],definition['parameters'],definition['description'])
+        project = self.get(model_id)
+        if project.get('domainGeneration'):
+            raise ValueError('Open the original obstacle model before constructing another enclosure.')
+        source = self.root / 'models' / f'{model_id}.step'
+        source_content = source.read_bytes()
+        actual = hashlib.sha256(source_content).hexdigest()
+        if actual != project.get('cadSha256',model_id):
+            raise ValueError('Original CAD hash changed; refusing to build from different geometry.')
+        fingerprint = hashlib.sha256(json.dumps({'source':actual,'definition':definition,'version':1},sort_keys=True).encode()).hexdigest()
+        with self.lock, self.connect() as db:
+            for row in db.execute('SELECT document FROM projects'):
+                existing = json.loads(row[0])
+                provenance = existing.get('domainGeneration') or {}
+                if provenance.get('fingerprint') == fingerprint and provenance.get('sourceModelId') == model_id:
+                    cached = self.root/'models'/f'{existing["id"]}.step'
+                    if not cached.is_file() or hashlib.sha256(cached.read_bytes()).hexdigest() != existing['cadSha256']:
+                        raise ValueError('The previously generated STEP is missing or changed. It was not overwritten or silently reused.')
+                    return existing
+        directory = self.root / 'exports' / 'domains' / uuid.uuid4().hex
+        directory.mkdir(parents=True)
+        source_snapshot = directory/'source.step'
+        source_snapshot.write_bytes(source_content)
+        output = directory / 'fluid-domain.step'
+        request = {'source':str(source_snapshot),'definition':definition,'output':str(output),'report':str(directory/'geometry-report.json')}
+        (directory/'request.json').write_text(json.dumps(request,allow_nan=False),encoding='utf-8')
+        with (directory/'geometry.log').open('w',encoding='utf-8') as log:
+            try:
+                process = subprocess.run([sys.executable,'-m','gradio_app.domain_geometry','--request',str(directory/'request.json')],
+                    cwd=Path(__file__).resolve().parents[1],stdout=log,stderr=subprocess.STDOUT,timeout=timeout_seconds)
+            except subprocess.TimeoutExpired as exc:
+                raise ValueError('Fluid CAD construction exceeded the time limit. Original model retained; no derived geometry activated.') from exc
+        report_path = directory/'geometry-report.json'
+        if not report_path.is_file():
+            raise ValueError('CAD worker returned no report. Original model retained; see domain geometry.log.')
+        report = json.loads(report_path.read_text(encoding='utf-8'))
+        if process.returncode or report.get('status') != 'succeeded':
+            raise ValueError(report.get('error','Fluid CAD construction failed.'))
+        if report.get('sourceSHA256') != actual:
+            raise ValueError('CAD worker source identity does not match the approved geometry.')
+        derived = self.open_step(output,fresh=True)
+        derived['filename'] = Path(project['filename']).stem + '-fluid-domain.step'
+        derived['simulationIntent'] = {'type':'fluid','domainStatus':'existing'}
+        derived['fluidDomain'] = {'kind':'existing','cadRole':'fluid_volume','parameters':{},
+                                  'description':'Verified derived '+definition['kind']+' fluid volume.','status':'ready'}
+        derived['domainGeneration'] = dict(report,sourceModelId=model_id,definition=definition,
+                                           fingerprint=fingerprint,artifactDirectory=str(directory))
+        for face in derived['faces']:
+            face['boundaryRole'] = report['faceRoles'][face['key']]
+        # Conditions/comments intentionally start empty: face identities changed.
+        with self.lock,self.connect() as db:
+            self._write(db,derived)
+        return derived
 
     def open_step(self, filename, *, fresh=False):
         """Import a separate setup when fresh; legacy callers may reopen by CAD hash."""
